@@ -1,6 +1,7 @@
 import { Plus, ShieldAlert, Unlock, UserCog } from 'lucide-react';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import type { PermissionCode, RoleCode } from '../../../shared/types/domain.ts';
+import { ModalDialog } from '../../components/ModalDialog.tsx';
 import { useToast } from '../../components/Toast.tsx';
 import { useAuth } from '../../hooks/useAuth.tsx';
 import { useI18n } from '../../hooks/useI18n.tsx';
@@ -247,195 +248,200 @@ export function UsersPage() {
       </div>
 
       {/* Create User Modal */}
-      {showCreateModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6">
-            <h3 className="text-base font-semibold mb-4">{t.users.createUser}</h3>
-            <form onSubmit={handleCreate} className="space-y-4">
-              <div>
-                <label className="block text-xs font-medium mb-1">{t.users.username}</label>
-                <input
-                  type="text"
-                  required
-                  dir="ltr"
-                  value={newUsername}
-                  onChange={(e) => setNewUsername(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium mb-1">{t.users.fullName}</label>
-                <input
-                  type="text"
-                  required
-                  value={newFullName}
-                  onChange={(e) => setNewFullName(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium mb-1">{t.auth.password}</label>
-                <input
-                  type="password"
-                  required
-                  minLength={8}
-                  dir="ltr"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
-                />
-                <p className="text-[11px] text-slate-500 mt-1">{t.auth.minPasswordHint}</p>
-              </div>
+      <ModalDialog
+        open={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        title={t.users.createUser}
+        size="sm"
+        onSubmit={handleCreate}
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setShowCreateModal(false)}
+              className="px-3.5 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              {t.auth.cancel}
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 rounded-lg bg-blue-900 hover:bg-blue-800 dark:bg-blue-700 dark:hover:bg-blue-600 text-white text-xs font-medium"
+            >
+              {t.users.createAction}
+            </button>
+          </>
+        }
+      >
+        <div>
+          <label className="block text-xs font-medium mb-1">{t.users.username}</label>
+          <input
+            type="text"
+            required
+            data-autofocus
+            dir="ltr"
+            value={newUsername}
+            onChange={(e) => setNewUsername(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium mb-1">{t.users.fullName}</label>
+          <input
+            type="text"
+            required
+            value={newFullName}
+            onChange={(e) => setNewFullName(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium mb-1">{t.auth.password}</label>
+          <input
+            type="password"
+            required
+            minLength={8}
+            dir="ltr"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
+          />
+          <p className="text-[11px] text-slate-500 mt-1">{t.auth.minPasswordHint}</p>
+        </div>
+        <div>
+          <label className="block text-xs font-medium mb-1">{t.users.role}</label>
+          <select
+            value={newRole}
+            onChange={(e) => setNewRole(e.target.value as RoleCode)}
+            className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
+          >
+            <option value="AGENT">{t.users.roleAgent}</option>
+            <option value="ADMIN">{t.users.roleAdmin}</option>
+          </select>
+        </div>
+      </ModalDialog>
+
+      {/* Edit User & Permission Overrides Drawer */}
+      <ModalDialog
+        open={Boolean(editingUser)}
+        onClose={() => setEditingUser(null)}
+        variant="drawer"
+        size="lg"
+        title={editingUser ? `${t.users.editUser}: ${editingUser.username}` : ''}
+        subtitle={editingUser?.fullName}
+        onSubmit={handleUpdate}
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setEditingUser(null)}
+              className="px-3.5 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              {t.auth.cancel}
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 rounded-lg bg-blue-900 hover:bg-blue-800 dark:bg-blue-700 dark:hover:bg-blue-600 text-white text-xs font-medium"
+            >
+              {t.users.saveChanges}
+            </button>
+          </>
+        }
+      >
+        {editingUser && (
+          <>
+            <div>
+              <label className="block text-xs font-medium mb-1">{t.users.fullName}</label>
+              <input
+                type="text"
+                required
+                data-autofocus
+                value={editFullName}
+                onChange={(e) => setEditFullName(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-medium mb-1">{t.users.role}</label>
                 <select
-                  value={newRole}
-                  onChange={(e) => setNewRole(e.target.value as RoleCode)}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
+                  value={editRole}
+                  disabled={editingUser.id === session?.user.id}
+                  onChange={(e) => setEditRole(e.target.value as RoleCode)}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm disabled:opacity-50"
                 >
                   <option value="AGENT">{t.users.roleAgent}</option>
                   <option value="ADMIN">{t.users.roleAdmin}</option>
                 </select>
               </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowCreateModal(false)}
-                  className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium"
-                >
-                  {t.auth.cancel}
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 rounded-lg bg-blue-900 dark:bg-blue-700 text-white text-xs font-medium"
-                >
-                  {t.users.createAction}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Edit User & Permission Overrides Drawer */}
-      {editingUser && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 flex justify-end">
-          <div className="w-full max-w-xl bg-white dark:bg-slate-900 border-s border-slate-200 dark:border-slate-800 h-full overflow-y-auto p-6">
-            <h3 className="text-base font-semibold mb-1">
-              {t.users.editUser}: {editingUser.username}
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mb-5">{editingUser.fullName}</p>
-
-            <form onSubmit={handleUpdate} className="space-y-4">
-              <div>
-                <label className="block text-xs font-medium mb-1">{t.users.fullName}</label>
-                <input
-                  type="text"
-                  required
-                  value={editFullName}
-                  onChange={(e) => setEditFullName(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-medium mb-1">{t.users.role}</label>
-                  <select
-                    value={editRole}
-                    disabled={editingUser.id === session?.user.id}
-                    onChange={(e) => setEditRole(e.target.value as RoleCode)}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm disabled:opacity-50"
-                  >
-                    <option value="AGENT">{t.users.roleAgent}</option>
-                    <option value="ADMIN">{t.users.roleAdmin}</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium mb-1">{t.users.status}</label>
-                  <select
-                    value={editIsActive ? '1' : '0'}
-                    disabled={editingUser.id === session?.user.id}
-                    onChange={(e) => setEditIsActive(e.target.value === '1')}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm disabled:opacity-50"
-                  >
-                    <option value="1">{t.users.active}</option>
-                    <option value="0">{t.users.inactive}</option>
-                  </select>
-                </div>
-              </div>
 
               <div>
-                <label className="block text-xs font-medium mb-1">
-                  {t.users.resetPasswordOptional}
-                </label>
-                <input
-                  type="password"
-                  minLength={8}
-                  dir="ltr"
-                  value={editResetPassword}
-                  onChange={(e) => setEditResetPassword(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
-                />
+                <label className="block text-xs font-medium mb-1">{t.users.status}</label>
+                <select
+                  value={editIsActive ? '1' : '0'}
+                  disabled={editingUser.id === session?.user.id}
+                  onChange={(e) => setEditIsActive(e.target.value === '1')}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm disabled:opacity-50"
+                >
+                  <option value="1">{t.users.active}</option>
+                  <option value="0">{t.users.inactive}</option>
+                </select>
               </div>
+            </div>
 
-              <div className="pt-2">
-                <h4 className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
-                  {t.users.permissionOverrides}
-                </h4>
-                <div className="border border-slate-200 dark:border-slate-800 rounded-lg divide-y divide-slate-200 dark:divide-slate-800 max-h-80 overflow-y-auto">
-                  {permissionsCatalog.map((perm) => {
-                    const currentVal = editOverrides[perm.code] ?? null;
-                    return (
-                      <div key={perm.code} className="px-3 py-2 flex items-center justify-between gap-3 text-xs">
-                        <div className="min-w-0">
-                          <div className="font-medium text-slate-800 dark:text-slate-200">
-                            {lang === 'ar' ? perm.descriptionAr : perm.descriptionFr}
-                          </div>
-                          <div className="font-mono-tabular text-[11px] text-slate-500">{perm.code}</div>
+            <div>
+              <label className="block text-xs font-medium mb-1">
+                {t.users.resetPasswordOptional}
+              </label>
+              <input
+                type="password"
+                minLength={8}
+                dir="ltr"
+                value={editResetPassword}
+                onChange={(e) => setEditResetPassword(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
+              />
+            </div>
+
+            <div className="pt-2">
+              <h4 className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
+                {t.users.permissionOverrides}
+              </h4>
+              <div className="border border-slate-200 dark:border-slate-800 rounded-lg divide-y divide-slate-200 dark:divide-slate-800 max-h-80 overflow-y-auto">
+                {permissionsCatalog.map((perm) => {
+                  const currentVal = editOverrides[perm.code] ?? null;
+                  return (
+                    <div key={perm.code} className="px-3 py-2 flex items-center justify-between gap-3 text-xs">
+                      <div className="min-w-0">
+                        <div className="font-medium text-slate-800 dark:text-slate-200">
+                          {lang === 'ar' ? perm.descriptionAr : perm.descriptionFr}
                         </div>
-                        <select
-                          value={currentVal === null ? 'inherit' : currentVal ? 'grant' : 'revoke'}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setEditOverrides((prev) => ({
-                              ...prev,
-                              [perm.code as PermissionCode]:
-                                v === 'inherit' ? null : v === 'grant',
-                            }));
-                          }}
-                          className="px-2 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs shrink-0"
-                        >
-                          <option value="inherit">{t.users.inheritRole}</option>
-                          <option value="grant">{t.users.forceGrant}</option>
-                          <option value="revoke">{t.users.forceRevoke}</option>
-                        </select>
+                        <div className="font-mono-tabular text-[11px] text-slate-500">{perm.code}</div>
                       </div>
-                    );
-                  })}
-                </div>
+                      <select
+                        value={currentVal === null ? 'inherit' : currentVal ? 'grant' : 'revoke'}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setEditOverrides((prev) => ({
+                            ...prev,
+                            [perm.code as PermissionCode]:
+                              v === 'inherit' ? null : v === 'grant',
+                          }));
+                        }}
+                        className="px-2 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs shrink-0"
+                      >
+                        <option value="inherit">{t.users.inheritRole}</option>
+                        <option value="grant">{t.users.forceGrant}</option>
+                        <option value="revoke">{t.users.forceRevoke}</option>
+                      </select>
+                    </div>
+                  );
+                })}
               </div>
-
-              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setEditingUser(null)}
-                  className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium"
-                >
-                  {t.auth.cancel}
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 rounded-lg bg-blue-900 dark:bg-blue-700 text-white text-xs font-medium"
-                >
-                  {t.users.saveChanges}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+            </div>
+          </>
+        )}
+      </ModalDialog>
     </div>
   );
 }

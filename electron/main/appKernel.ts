@@ -39,7 +39,10 @@ export function startDesktopKernel(config: DesktopKernelConfig): DesktopKernel {
 
   const vaultKey = getOrCreateLocalVaultKey(config.vaultRootDir);
   const sessionStore = new SessionStore('desktop');
-  const handlers = createIpcHandlers(db, sessionStore);
+  const handlers = createIpcHandlers(db, sessionStore, {
+    vaultRootDir: config.vaultRootDir,
+    vaultKey,
+  });
 
   return {
     db,

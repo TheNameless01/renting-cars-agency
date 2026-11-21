@@ -37,10 +37,10 @@ interface NavEntry {
 
 const NAV_ENTRIES: NavEntry[] = [
   { to: '/', labelKey: 'dashboard', icon: LayoutDashboard, enabled: true },
-  { to: '/vehicles', labelKey: 'vehicles', icon: Car, enabled: false },
-  { to: '/planning', labelKey: 'planning', icon: CalendarDays, enabled: false },
-  { to: '/customers', labelKey: 'customers', icon: Users, enabled: false },
-  { to: '/contracts', labelKey: 'contracts', icon: FileText, enabled: false },
+  { to: '/vehicles', labelKey: 'vehicles', icon: Car, enabled: true },
+  { to: '/planning', labelKey: 'planning', icon: CalendarDays, enabled: true },
+  { to: '/customers', labelKey: 'customers', icon: Users, enabled: true },
+  { to: '/contracts', labelKey: 'contracts', icon: FileText, enabled: true },
   { to: '/inspections', labelKey: 'inspections', icon: ClipboardCheck, enabled: false },
   { to: '/finance', labelKey: 'finance', icon: Wallet, enabled: false },
   { to: '/maintenance', labelKey: 'maintenance', icon: Wrench, enabled: false },

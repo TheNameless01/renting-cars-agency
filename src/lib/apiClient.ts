@@ -3,8 +3,27 @@ import { PREVIEW_ENDPOINTS } from '../../shared/api/previewContracts.ts';
 import type {
   AuditLogEntry,
   AuthSession,
+  ContractPricingItem,
+  ContractStatus,
+  CurrencyCode,
+  Customer,
+  CustomerCompany,
+  CustomerDocument,
+  CustomerRiskRecord,
+  DepositStatus,
+  MileageMode,
+  PaymentMethod,
   PermissionCode,
+  ReservationStatus,
+  RiskLevel,
+  RiskReason,
   RoleCode,
+  Vehicle,
+  VehicleDocType,
+  VehicleDocument,
+  VehicleFuelType,
+  VehicleStatus,
+  VehicleTransmission,
 } from '../../shared/types/domain.ts';
 
 declare global {
@@ -57,6 +76,302 @@ export interface PermissionCatalogItem {
   descriptionAr: string;
 }
 
+export interface VehicleBlockedPeriodDto {
+  id: number;
+  vehicleId: number;
+  blockType: 'MAINTENANCE' | 'ADMIN_HOLD' | 'OTHER';
+  startDate: string;
+  endDate: string;
+  reason: string;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface VehicleProfileDto {
+  vehicle: Vehicle;
+  documents: VehicleDocument[];
+  blockedPeriods: VehicleBlockedPeriodDto[];
+  rentalHistory: Array<{
+    id: number;
+    contractNumber: string;
+    customerId: number;
+    customerName: string;
+    status: ContractStatus;
+    startDate: string;
+    expectedReturnDate: string;
+    actualReturnDate: string | null;
+    totalContractAmountMinor: number;
+    currency: CurrencyCode;
+  }>;
+  reservations: Array<{
+    id: number;
+    reservationNumber: string;
+    customerId: number;
+    customerName: string;
+    status: ReservationStatus;
+    startDate: string;
+    expectedReturnDate: string;
+    estimatedTotalMinor: number;
+  }>;
+}
+
+export interface CustomerListItemDto extends Customer {
+  companyName: string | null;
+  rcNumber: string | null;
+  nifNumber: string | null;
+  totalRentals: number;
+}
+
+export interface CustomerCustomRateDto {
+  id: number;
+  customerId: number;
+  customerName?: string;
+  vehicleCategory: string | null;
+  vehicleId: number | null;
+  vehicleLabel?: string | null;
+  dailyRateMinor: number | null;
+  weeklyRateMinor: number | null;
+  monthlyRateMinor: number | null;
+  defaultDiscountPercent: number;
+  notes: string | null;
+}
+
+export interface CustomerProfileDto {
+  customer: Customer;
+  company: CustomerCompany | null;
+  riskRecords: CustomerRiskRecord[];
+  documents: CustomerDocument[];
+  rentalHistory: Array<{
+    id: number;
+    contractNumber: string;
+    vehicleId: number;
+    vehicleLabel: string;
+    status: ContractStatus;
+    startDate: string;
+    expectedReturnDate: string;
+    actualReturnDate: string | null;
+    totalContractAmountMinor: number;
+    currency: CurrencyCode;
+  }>;
+  customRates: CustomerCustomRateDto[];
+  stats: {
+    totalRentals: number;
+    totalChargedMinor: number;
+    netPaidMinor: number;
+    outstandingBalanceMinor: number;
+  };
+}
+
+export interface CustomerEligibilityDto {
+  eligible: boolean;
+  requiresBlacklistOverride: boolean;
+  riskStatus: RiskLevel;
+  warnings: string[];
+  blockers: string[];
+}
+
+export interface AvailabilityResultDto {
+  available: boolean;
+  conflicts: Array<{
+    sourceType: 'VEHICLE_STATUS' | 'CONTRACT' | 'RESERVATION' | 'BLOCKED_PERIOD';
+    sourceId: number | string;
+    reference: string;
+    startDate: string;
+    endDate: string;
+    details: string;
+  }>;
+}
+
+export interface PlanningCalendarDto {
+  vehicles: Array<{
+    id: number;
+    internalCode: string;
+    matricule: string;
+    brand: string;
+    model: string;
+    year: number;
+    category: string;
+    status: VehicleStatus;
+    defaultDailyRateMinor: number;
+  }>;
+  events: Array<{
+    eventType: 'CONTRACT' | 'RESERVATION' | 'BLOCKED_PERIOD';
+    id: number;
+    vehicleId: number;
+    customerId: number | null;
+    customerName: string | null;
+    reference: string;
+    status: string;
+    startDate: string;
+    endDate: string;
+    actualReturnDate: string | null;
+    notes: string | null;
+  }>;
+}
+
+export interface ReservationListItemDto {
+  id: number;
+  reservationNumber: string;
+  customerId: number;
+  customerName: string;
+  customerPhone: string;
+  vehicleId: number;
+  vehicleLabel: string;
+  startDate: string;
+  expectedReturnDate: string;
+  estimatedTotalMinor: number;
+  status: ReservationStatus;
+  notes: string | null;
+  createdAt: string;
+}
+
+export interface PriceCalculationDto {
+  days: number;
+  appliedTier: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'SEASONAL' | 'CUSTOMER_CUSTOM' | 'CUSTOM';
+  appliedRuleSource: string;
+  unitDailyRateMinor: number;
+  grossTotalMinor: number;
+  discountMinor: number;
+  netTotalMinor: number;
+  discountPercentEffective: number;
+  maxAgentDiscountPercent: number;
+  requiresAdminDiscountOverride: boolean;
+  lineItems: Array<{
+    itemType: string;
+    label: string;
+    quantity: number;
+    unitPriceMinor: number;
+    totalMinor: number;
+  }>;
+}
+
+export interface PricingRulesDto {
+  seasonalRates: Array<{
+    id: number;
+    name: string;
+    vehicleCategory: string | null;
+    vehicleId: number | null;
+    vehicleLabel: string | null;
+    startDate: string;
+    endDate: string;
+    dailyRateMinor: number;
+    weeklyRateMinor: number | null;
+    monthlyRateMinor: number | null;
+    isActive: boolean;
+  }>;
+  customerRates: CustomerCustomRateDto[];
+}
+
+export interface ContractListItemDto {
+  id: number;
+  contractNumber: string;
+  reservationId: number | null;
+  customerId: number;
+  customerName: string;
+  customerPhone: string;
+  customerRiskStatus: RiskLevel;
+  vehicleId: number;
+  vehicleLabel: string;
+  status: ContractStatus;
+  startDate: string;
+  originalEndDate: string;
+  expectedReturnDate: string;
+  actualReturnDate: string | null;
+  departureOdometerKm: number;
+  returnOdometerKm: number | null;
+  mileageMode: MileageMode;
+  includedTotalKm: number | null;
+  currency: CurrencyCode;
+  totalContractAmountMinor: number;
+  paidNetMinor: number;
+  outstandingMinor: number;
+  depositAmountMinor: number;
+  depositStatus: DepositStatus | null;
+  createdAt: string;
+}
+
+export interface ContractDetailDto {
+  contract: {
+    id: number;
+    contractNumber: string;
+    reservationId: number | null;
+    customerId: number;
+    customerName: string;
+    customerPhone: string;
+    customerType: 'INDIVIDUAL' | 'COMPANY';
+    customerRiskStatus: RiskLevel;
+    vehicleId: number;
+    vehicleLabel: string;
+    vehicleYear: number;
+    vehicleCurrentOdometerKm: number;
+    vehicleDefaultDailyRateMinor: number;
+    status: ContractStatus;
+    startDate: string;
+    originalEndDate: string;
+    expectedReturnDate: string;
+    actualReturnDate: string | null;
+    departureOdometerKm: number;
+    returnOdometerKm: number | null;
+    odometerCorrectionReason: string | null;
+    mileageMode: MileageMode;
+    dailyMileageAllowanceKm: number | null;
+    includedTotalKm: number | null;
+    extraKmRateMinor: number;
+    currency: CurrencyCode;
+    baseRentalTotalMinor: number;
+    discountMinor: number;
+    extensionTotalMinor: number;
+    extraKmChargeMinor: number;
+    lateFeeMinor: number;
+    damageChargeMinor: number;
+    otherChargesMinor: number;
+    totalContractAmountMinor: number;
+    paidNetMinor: number;
+    outstandingMinor: number;
+    blacklistOverrideReason: string | null;
+    notes: string | null;
+    createdAt: string;
+    updatedAt: string;
+  };
+  pricingItems: ContractPricingItem[];
+  extensions: Array<{
+    id: number;
+    contractId: number;
+    previousReturnDate: string;
+    newReturnDate: string;
+    addedDays: number;
+    additionalAmountMinor: number;
+    additionalKmAllowance: number;
+    notes: string | null;
+    createdByUsername: string;
+    createdAt: string;
+  }>;
+  payments: Array<{
+    id: number;
+    transactionCode: string;
+    receiptNumber: string;
+    direction: 'INFLOW' | 'REFUND';
+    method: PaymentMethod;
+    paymentReference: string | null;
+    amountMinor: number;
+    currency: CurrencyCode;
+    paymentDate: string;
+    description: string | null;
+    createdAt: string;
+  }>;
+  deposit: {
+    id: number;
+    amountMinor: number;
+    currency: CurrencyCode;
+    status: DepositStatus;
+    receivedDate: string;
+    returnedDate: string | null;
+    deductedAmountMinor: number;
+    refundedAmountMinor: number;
+    deductionReason: string | null;
+  } | null;
+}
+
 /**
  * In-memory auth token only (never written to localStorage or sessionStorage).
  */
@@ -76,7 +391,7 @@ export function isDesktopRuntime(): boolean {
 
 async function callBackend<T>(
   ipcChannel: IpcChannel,
-  httpMethod: 'GET' | 'POST' | 'PUT' | 'PATCH',
+  httpMethod: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   httpUrl: string,
   payload?: unknown
 ): Promise<T> {
@@ -103,7 +418,7 @@ async function callBackend<T>(
   const response = await fetch(httpUrl, {
     method: httpMethod,
     headers,
-    body: httpMethod !== 'GET' && payload !== undefined ? JSON.stringify(payload) : undefined,
+    body: httpMethod !== 'GET' && httpMethod !== 'DELETE' && payload !== undefined ? JSON.stringify(payload) : undefined,
   });
 
   const body = (await response.json()) as IpcResult<T>;
@@ -113,6 +428,17 @@ async function callBackend<T>(
     throw err;
   }
   return body.data as T;
+}
+
+function buildQuery(params: Record<string, string | boolean | undefined>): string {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== '') {
+      qs.set(k, String(v));
+    }
+  }
+  const str = qs.toString();
+  return str ? `?${str}` : '';
 }
 
 export const erpClient = {
@@ -227,5 +553,507 @@ export const erpClient = {
       'GET',
       `${PREVIEW_ENDPOINTS.AUDIT}?limit=${limit}`,
       { limit }
+    ),
+
+  // Phase 2: Fleet Management
+  listVehicles: (filters?: { search?: string; status?: string; category?: string; includeArchived?: boolean }) =>
+    callBackend<Vehicle[]>(
+      IPC_CHANNELS.VEHICLES_LIST,
+      'GET',
+      `${PREVIEW_ENDPOINTS.VEHICLES}${buildQuery({
+        search: filters?.search,
+        status: filters?.status,
+        category: filters?.category,
+        includeArchived: filters?.includeArchived,
+      })}`,
+      filters
+    ),
+
+  getVehicleProfile: (id: number) =>
+    callBackend<VehicleProfileDto>(
+      IPC_CHANNELS.VEHICLES_GET,
+      'GET',
+      `${PREVIEW_ENDPOINTS.VEHICLES}/${id}`,
+      { id }
+    ),
+
+  createVehicle: (payload: {
+    internalCode: string;
+    matricule: string;
+    vin?: string | null;
+    brand: string;
+    model: string;
+    year: number;
+    color: string;
+    category: string;
+    fuelType: VehicleFuelType;
+    transmission: VehicleTransmission;
+    seats: number;
+    currentOdometerKm: number;
+    acquisitionDate?: string | null;
+    acquisitionCostMinor?: number | null;
+    defaultDailyRateMinor: number;
+    defaultWeeklyRateMinor?: number | null;
+    defaultMonthlyRateMinor?: number | null;
+    notes?: string | null;
+  }) =>
+    callBackend<Vehicle>(IPC_CHANNELS.VEHICLES_CREATE, 'POST', PREVIEW_ENDPOINTS.VEHICLES, payload),
+
+  updateVehicle: (payload: {
+    id: number;
+    internalCode?: string;
+    matricule?: string;
+    vin?: string | null;
+    brand?: string;
+    model?: string;
+    year?: number;
+    color?: string;
+    category?: string;
+    fuelType?: VehicleFuelType;
+    transmission?: VehicleTransmission;
+    seats?: number;
+    currentOdometerKm?: number;
+    acquisitionDate?: string | null;
+    acquisitionCostMinor?: number | null;
+    defaultDailyRateMinor?: number;
+    defaultWeeklyRateMinor?: number | null;
+    defaultMonthlyRateMinor?: number | null;
+    status?: VehicleStatus;
+    notes?: string | null;
+  }) =>
+    callBackend<Vehicle>(
+      IPC_CHANNELS.VEHICLES_UPDATE,
+      'PATCH',
+      `${PREVIEW_ENDPOINTS.VEHICLES}/${payload.id}`,
+      payload
+    ),
+
+  archiveVehicle: (id: number) =>
+    callBackend<{ archived: boolean }>(
+      IPC_CHANNELS.VEHICLES_ARCHIVE,
+      'POST',
+      `${PREVIEW_ENDPOINTS.VEHICLES}/${id}/archive`,
+      { id }
+    ),
+
+  upsertVehicleDoc: (payload: {
+    id?: number;
+    vehicleId: number;
+    docType: VehicleDocType;
+    documentNumber?: string | null;
+    issueDate?: string | null;
+    expirationDate: string;
+    reminderDays: number;
+    notes?: string | null;
+  }) =>
+    callBackend<VehicleDocument>(
+      IPC_CHANNELS.VEHICLES_UPSERT_DOC,
+      'POST',
+      `${PREVIEW_ENDPOINTS.VEHICLES}/${payload.vehicleId}/documents`,
+      payload
+    ),
+
+  createVehicleBlock: (payload: {
+    vehicleId: number;
+    blockType: 'MAINTENANCE' | 'ADMIN_HOLD' | 'OTHER';
+    startDate: string;
+    endDate: string;
+    reason: string;
+  }) =>
+    callBackend<VehicleBlockedPeriodDto>(
+      IPC_CHANNELS.VEHICLES_CREATE_BLOCK,
+      'POST',
+      `${PREVIEW_ENDPOINTS.VEHICLES}/${payload.vehicleId}/blocks`,
+      payload
+    ),
+
+  releaseVehicleBlock: (blockId: number) =>
+    callBackend<{ released: boolean }>(
+      IPC_CHANNELS.VEHICLES_RELEASE_BLOCK,
+      'POST',
+      `${PREVIEW_ENDPOINTS.VEHICLES}/blocks/${blockId}/release`,
+      { blockId }
+    ),
+
+  // Phase 2: Customers & Risk
+  listCustomers: (filters?: {
+    search?: string;
+    customerType?: string;
+    riskStatus?: string;
+    includeArchived?: boolean;
+  }) =>
+    callBackend<CustomerListItemDto[]>(
+      IPC_CHANNELS.CUSTOMERS_LIST,
+      'GET',
+      `${PREVIEW_ENDPOINTS.CUSTOMERS}${buildQuery({
+        search: filters?.search,
+        customerType: filters?.customerType,
+        riskStatus: filters?.riskStatus,
+        includeArchived: filters?.includeArchived,
+      })}`,
+      filters
+    ),
+
+  getCustomerProfile: (id: number) =>
+    callBackend<CustomerProfileDto>(
+      IPC_CHANNELS.CUSTOMERS_GET,
+      'GET',
+      `${PREVIEW_ENDPOINTS.CUSTOMERS}/${id}`,
+      { id }
+    ),
+
+  createCustomer: (payload: {
+    customerType: 'INDIVIDUAL' | 'COMPANY';
+    fullName: string;
+    dateOfBirth?: string | null;
+    phone: string;
+    secondaryPhone?: string | null;
+    address?: string | null;
+    wilayaCode?: string | null;
+    commune?: string | null;
+    cniNumber?: string | null;
+    passportNumber?: string | null;
+    drivingLicenceNumber?: string | null;
+    drivingLicenceIssueDate?: string | null;
+    drivingLicenceExpirationDate?: string | null;
+    internalNotes?: string | null;
+    company?: {
+      companyName: string;
+      legalRepresentative: string;
+      rcNumber?: string | null;
+      nifNumber?: string | null;
+      nisNumber?: string | null;
+      artNumber?: string | null;
+      bonDeCommandeNumber?: string | null;
+    } | null;
+  }) =>
+    callBackend<CustomerProfileDto>(
+      IPC_CHANNELS.CUSTOMERS_CREATE,
+      'POST',
+      PREVIEW_ENDPOINTS.CUSTOMERS,
+      payload
+    ),
+
+  updateCustomer: (payload: {
+    id: number;
+    customerType?: 'INDIVIDUAL' | 'COMPANY';
+    fullName?: string;
+    dateOfBirth?: string | null;
+    phone?: string;
+    secondaryPhone?: string | null;
+    address?: string | null;
+    wilayaCode?: string | null;
+    commune?: string | null;
+    cniNumber?: string | null;
+    passportNumber?: string | null;
+    drivingLicenceNumber?: string | null;
+    drivingLicenceIssueDate?: string | null;
+    drivingLicenceExpirationDate?: string | null;
+    internalNotes?: string | null;
+    company?: {
+      companyName: string;
+      legalRepresentative: string;
+      rcNumber?: string | null;
+      nifNumber?: string | null;
+      nisNumber?: string | null;
+      artNumber?: string | null;
+      bonDeCommandeNumber?: string | null;
+    } | null;
+  }) =>
+    callBackend<CustomerProfileDto>(
+      IPC_CHANNELS.CUSTOMERS_UPDATE,
+      'PATCH',
+      `${PREVIEW_ENDPOINTS.CUSTOMERS}/${payload.id}`,
+      payload
+    ),
+
+  archiveCustomer: (id: number) =>
+    callBackend<{ archived: boolean }>(
+      IPC_CHANNELS.CUSTOMERS_ARCHIVE,
+      'POST',
+      `${PREVIEW_ENDPOINTS.CUSTOMERS}/${id}/archive`,
+      { id }
+    ),
+
+  addCustomerRisk: (payload: {
+    customerId: number;
+    riskLevel: RiskLevel;
+    reason: RiskReason;
+    description: string;
+    incidentDate: string;
+  }) =>
+    callBackend<CustomerRiskRecord>(
+      IPC_CHANNELS.CUSTOMERS_ADD_RISK,
+      'POST',
+      `${PREVIEW_ENDPOINTS.CUSTOMERS}/${payload.customerId}/risk`,
+      payload
+    ),
+
+  resolveCustomerRisk: (payload: {
+    riskRecordId: number;
+    resolutionNotes: string;
+    nextCustomerRiskStatus?: RiskLevel;
+  }) =>
+    callBackend<CustomerRiskRecord>(
+      IPC_CHANNELS.CUSTOMERS_RESOLVE_RISK,
+      'POST',
+      `${PREVIEW_ENDPOINTS.CUSTOMERS}/risk/${payload.riskRecordId}/resolve`,
+      payload
+    ),
+
+  uploadCustomerDoc: (payload: {
+    customerId: number;
+    docCategory: CustomerDocument['docCategory'];
+    originalFileName: string;
+    mimeType: 'image/jpeg' | 'image/png' | 'image/webp' | 'application/pdf';
+    base64Data: string;
+  }) =>
+    callBackend<CustomerDocument>(
+      IPC_CHANNELS.CUSTOMERS_UPLOAD_DOC,
+      'POST',
+      `${PREVIEW_ENDPOINTS.CUSTOMERS}/${payload.customerId}/documents`,
+      payload
+    ),
+
+  readCustomerDoc: (docId: number) =>
+    callBackend<{ id: number; originalFileName: string; mimeType: string; base64Data: string }>(
+      IPC_CHANNELS.CUSTOMERS_READ_DOC,
+      'GET',
+      `${PREVIEW_ENDPOINTS.CUSTOMERS}/documents/${docId}`,
+      { docId }
+    ),
+
+  checkCustomerEligibility: (customerId: number, rentalEndDate: string) =>
+    callBackend<CustomerEligibilityDto>(
+      IPC_CHANNELS.CUSTOMERS_CHECK_ELIGIBILITY,
+      'POST',
+      `${PREVIEW_ENDPOINTS.CUSTOMERS}/${customerId}/eligibility`,
+      { customerId, rentalEndDate }
+    ),
+
+  // Phase 2: Pricing Engine
+  calculateRentalPrice: (payload: {
+    vehicleId: number;
+    customerId?: number | null;
+    startDate: string;
+    endDate: string;
+    pricingTier?: 'AUTO' | 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'CUSTOM';
+    customDailyRateMinor?: number | null;
+    customTotalMinor?: number | null;
+    discountType?: 'NONE' | 'FIXED' | 'PERCENT';
+    discountValue?: number;
+  }) =>
+    callBackend<PriceCalculationDto>(
+      IPC_CHANNELS.PRICING_CALCULATE,
+      'POST',
+      `${PREVIEW_ENDPOINTS.PRICING}/calculate`,
+      payload
+    ),
+
+  listPricingRules: () =>
+    callBackend<PricingRulesDto>(
+      IPC_CHANNELS.PRICING_LIST_RULES,
+      'GET',
+      `${PREVIEW_ENDPOINTS.PRICING}/rules`
+    ),
+
+  createSeasonalRate: (payload: {
+    name: string;
+    vehicleCategory?: string | null;
+    vehicleId?: number | null;
+    startDate: string;
+    endDate: string;
+    dailyRateMinor: number;
+    weeklyRateMinor?: number | null;
+    monthlyRateMinor?: number | null;
+  }) =>
+    callBackend<any>(
+      IPC_CHANNELS.PRICING_CREATE_SEASONAL,
+      'POST',
+      `${PREVIEW_ENDPOINTS.PRICING}/seasonal`,
+      payload
+    ),
+
+  deleteSeasonalRate: (id: number) =>
+    callBackend<{ deleted: boolean }>(
+      IPC_CHANNELS.PRICING_DELETE_SEASONAL,
+      'DELETE',
+      `${PREVIEW_ENDPOINTS.PRICING}/seasonal/${id}`,
+      { id }
+    ),
+
+  upsertCustomerCustomRate: (payload: {
+    customerId: number;
+    vehicleCategory?: string | null;
+    vehicleId?: number | null;
+    dailyRateMinor?: number | null;
+    weeklyRateMinor?: number | null;
+    monthlyRateMinor?: number | null;
+    defaultDiscountPercent?: number;
+    notes?: string | null;
+  }) =>
+    callBackend<CustomerCustomRateDto>(
+      IPC_CHANNELS.PRICING_UPSERT_CUSTOMER_RATE,
+      'POST',
+      `${PREVIEW_ENDPOINTS.PRICING}/customer-rates`,
+      payload
+    ),
+
+  // Phase 2: Planning & Reservations
+  getPlanningCalendar: (startDate: string, endDate: string) =>
+    callBackend<PlanningCalendarDto>(
+      IPC_CHANNELS.PLANNING_CALENDAR,
+      'GET',
+      `${PREVIEW_ENDPOINTS.PLANNING}/calendar${buildQuery({ startDate, endDate })}`,
+      { startDate, endDate }
+    ),
+
+  checkVehicleAvailability: (payload: {
+    vehicleId: number;
+    startDate: string;
+    endDate: string;
+    excludeContractId?: number | null;
+    excludeReservationId?: number | null;
+  }) =>
+    callBackend<AvailabilityResultDto>(
+      IPC_CHANNELS.PLANNING_CHECK_AVAILABILITY,
+      'POST',
+      `${PREVIEW_ENDPOINTS.PLANNING}/check-availability`,
+      payload
+    ),
+
+  listReservations: (status?: string) =>
+    callBackend<ReservationListItemDto[]>(
+      IPC_CHANNELS.RESERVATIONS_LIST,
+      'GET',
+      `${PREVIEW_ENDPOINTS.RESERVATIONS}${buildQuery({ status })}`,
+      status ? { status } : undefined
+    ),
+
+  createReservation: (payload: {
+    customerId: number;
+    vehicleId: number;
+    startDate: string;
+    expectedReturnDate: string;
+    estimatedTotalMinor: number;
+    status: 'PENDING' | 'CONFIRMED';
+    notes?: string | null;
+  }) =>
+    callBackend<ReservationListItemDto>(
+      IPC_CHANNELS.RESERVATIONS_CREATE,
+      'POST',
+      PREVIEW_ENDPOINTS.RESERVATIONS,
+      payload
+    ),
+
+  updateReservationStatus: (payload: {
+    reservationId: number;
+    status: 'PENDING' | 'CONFIRMED' | 'CANCELLED' | 'NO_SHOW';
+    notes?: string | null;
+  }) =>
+    callBackend<ReservationListItemDto>(
+      IPC_CHANNELS.RESERVATIONS_UPDATE_STATUS,
+      'PATCH',
+      `${PREVIEW_ENDPOINTS.RESERVATIONS}/${payload.reservationId}/status`,
+      payload
+    ),
+
+  // Phase 2: Rental Contracts & Extensions
+  listContracts: (filters?: { status?: string; search?: string }) =>
+    callBackend<ContractListItemDto[]>(
+      IPC_CHANNELS.CONTRACTS_LIST,
+      'GET',
+      `${PREVIEW_ENDPOINTS.CONTRACTS}${buildQuery({ status: filters?.status, search: filters?.search })}`,
+      filters
+    ),
+
+  getContractDetail: (id: number) =>
+    callBackend<ContractDetailDto>(
+      IPC_CHANNELS.CONTRACTS_GET,
+      'GET',
+      `${PREVIEW_ENDPOINTS.CONTRACTS}/${id}`,
+      { id }
+    ),
+
+  createContract: (payload: {
+    reservationId?: number | null;
+    customerId: number;
+    vehicleId: number;
+    startDate: string;
+    expectedReturnDate: string;
+    departureOdometerKm: number;
+    mileageMode: MileageMode;
+    dailyMileageAllowanceKm?: number | null;
+    includedTotalKm?: number | null;
+    extraKmRateMinor: number;
+    currency: CurrencyCode;
+    baseRentalTotalMinor: number;
+    discountMinor: number;
+    depositAmountMinor: number;
+    depositCurrency: CurrencyCode;
+    initialPaymentMinor: number;
+    initialPaymentMethod: PaymentMethod;
+    initialPaymentReference?: string | null;
+    blacklistOverrideReason?: string | null;
+    notes?: string | null;
+    initialStatus?: 'DRAFT' | 'CONFIRMED' | 'ACTIVE';
+    pricingTier?: 'AUTO' | 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'CUSTOM';
+    discountType?: 'NONE' | 'FIXED' | 'PERCENT';
+    discountValue?: number;
+    pricingBreakdownLabel?: string;
+    discountAuthorizationReason?: string | null;
+  }) =>
+    callBackend<ContractDetailDto>(
+      IPC_CHANNELS.CONTRACTS_CREATE,
+      'POST',
+      PREVIEW_ENDPOINTS.CONTRACTS,
+      payload
+    ),
+
+  activateContract: (contractId: number, departureOdometerKm?: number) =>
+    callBackend<ContractDetailDto>(
+      IPC_CHANNELS.CONTRACTS_ACTIVATE,
+      'POST',
+      `${PREVIEW_ENDPOINTS.CONTRACTS}/${contractId}/activate`,
+      { contractId, departureOdometerKm }
+    ),
+
+  extendContract: (payload: {
+    contractId: number;
+    newReturnDate: string;
+    additionalAmountMinor: number;
+    additionalKmAllowance: number;
+    notes?: string | null;
+  }) =>
+    callBackend<ContractDetailDto>(
+      IPC_CHANNELS.CONTRACTS_EXTEND,
+      'POST',
+      `${PREVIEW_ENDPOINTS.CONTRACTS}/${payload.contractId}/extend`,
+      payload
+    ),
+
+  completeContract: (payload: {
+    contractId: number;
+    actualReturnDate: string;
+    returnOdometerKm: number;
+    odometerCorrectionReason?: string | null;
+    lateFeeMinor: number;
+    damageChargeMinor: number;
+    otherChargesMinor: number;
+    notes?: string | null;
+  }) =>
+    callBackend<ContractDetailDto>(
+      IPC_CHANNELS.CONTRACTS_COMPLETE,
+      'POST',
+      `${PREVIEW_ENDPOINTS.CONTRACTS}/${payload.contractId}/complete`,
+      payload
+    ),
+
+  cancelContract: (contractId: number, reason: string) =>
+    callBackend<ContractDetailDto>(
+      IPC_CHANNELS.CONTRACTS_CANCEL,
+      'POST',
+      `${PREVIEW_ENDPOINTS.CONTRACTS}/${contractId}/cancel`,
+      { contractId, reason }
     ),
 };

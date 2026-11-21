@@ -1,11 +1,12 @@
 import { Lock } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { useAuth } from '../../hooks/useAuth.tsx';
 import { useI18n } from '../../hooks/useI18n.tsx';
 
 export function LockOverlay() {
   const { session, unlock, logout } = useAuth();
-  const { t } = useI18n();
+  const { t, dir } = useI18n();
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -26,18 +27,24 @@ export function LockOverlay() {
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-6">
-      <div className="w-full max-w-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-xl">
+  return createPortal(
+    <div
+      dir={dir}
+      role="dialog"
+      aria-modal="true"
+      aria-label={t.auth.lockedTitle}
+      className="fixed inset-0 z-[200] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6"
+    >
+      <div className="w-full max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-2xl">
         <div className="flex items-center gap-3 mb-3">
-          <div className="w-9 h-9 rounded-lg bg-slate-900 dark:bg-slate-800 text-white flex items-center justify-center">
+          <div className="w-9 h-9 rounded-lg bg-slate-900 dark:bg-slate-800 text-white flex items-center justify-center shrink-0">
             <Lock className="w-4 h-4" />
           </div>
-          <div>
+          <div className="min-w-0">
             <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
               {t.auth.lockedTitle}
             </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
+            <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
               {session.user.fullName} ({session.user.username})
             </p>
           </div>
@@ -81,6 +88,7 @@ export function LockOverlay() {
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

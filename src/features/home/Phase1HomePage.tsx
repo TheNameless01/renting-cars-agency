@@ -1,4 +1,4 @@
-import { ArrowRight, Database, MapPin, Settings, ShieldCheck } from 'lucide-react';
+import { ArrowRight, CalendarDays, Car, Database, FileText, MapPin, Settings, ShieldCheck, Users } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth.tsx';
@@ -6,16 +6,39 @@ import { useI18n } from '../../hooks/useI18n.tsx';
 import { erpClient } from '../../lib/apiClient.ts';
 import { formatDigits } from '../../lib/formatters.ts';
 
+interface LiveOperationalSummary {
+  wilayas: number;
+  vehiclesTotal: number;
+  vehiclesAvailable: number;
+  customersTotal: number;
+  contractsActive: number;
+  reservationsOpen: number;
+}
+
 export function Phase1HomePage() {
   const { session, runtimeMode, hasPermission } = useAuth();
   const { t, numerals } = useI18n();
-  const [wilayaCount, setWilayaCount] = useState<number | null>(null);
+  const [summary, setSummary] = useState<LiveOperationalSummary | null>(null);
 
   useEffect(() => {
-    erpClient
-      .listWilayas(true)
-      .then((list) => setWilayaCount(list.length))
-      .catch(() => setWilayaCount(null));
+    Promise.all([
+      erpClient.listWilayas(true),
+      erpClient.listVehicles({ includeArchived: false }),
+      erpClient.listCustomers({ includeArchived: false }),
+      erpClient.listContracts(),
+      erpClient.listReservations(),
+    ])
+      .then(([wilayas, vehicles, customers, contracts, reservations]) => {
+        setSummary({
+          wilayas: wilayas.length,
+          vehiclesTotal: vehicles.length,
+          vehiclesAvailable: vehicles.filter((v) => v.status === 'AVAILABLE').length,
+          customersTotal: customers.length,
+          contractsActive: contracts.filter((c) => c.status === 'ACTIVE' || c.status === 'EXTENDED').length,
+          reservationsOpen: reservations.filter((r) => r.status === 'PENDING' || r.status === 'CONFIRMED').length,
+        });
+      })
+      .catch(() => setSummary(null));
   }, []);
 
   if (!session) return null;
@@ -27,6 +50,74 @@ export function Phase1HomePage() {
         <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">{t.home.subtitle}</p>
       </div>
 
+      {/* Real Operational Counts from SQLite */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Link
+          to="/vehicles"
+          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 hover:border-blue-400 dark:hover:border-blue-700 transition-colors"
+        >
+          <div className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">
+            <Car className="w-4 h-4 text-blue-800 dark:text-blue-400" />
+            <span>{t.nav.vehicles}</span>
+          </div>
+          <div className="text-2xl font-semibold font-mono-tabular text-slate-900 dark:text-slate-100">
+            {summary ? formatDigits(summary.vehiclesTotal, numerals) : '—'}
+          </div>
+          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+            {summary
+              ? `${formatDigits(summary.vehiclesAvailable, numerals)} ${t.vehicles.statuses.AVAILABLE}`
+              : t.common.loading}
+          </p>
+        </Link>
+
+        <Link
+          to="/customers"
+          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 hover:border-blue-400 dark:hover:border-blue-700 transition-colors"
+        >
+          <div className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">
+            <Users className="w-4 h-4 text-emerald-700 dark:text-emerald-400" />
+            <span>{t.nav.customers}</span>
+          </div>
+          <div className="text-2xl font-semibold font-mono-tabular text-slate-900 dark:text-slate-100">
+            {summary ? formatDigits(summary.customersTotal, numerals) : '—'}
+          </div>
+          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">{t.customers.subtitle.slice(0, 48)}</p>
+        </Link>
+
+        <Link
+          to="/planning"
+          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 hover:border-blue-400 dark:hover:border-blue-700 transition-colors"
+        >
+          <div className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">
+            <CalendarDays className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+            <span>{t.planning.reservationsList}</span>
+          </div>
+          <div className="text-2xl font-semibold font-mono-tabular text-slate-900 dark:text-slate-100">
+            {summary ? formatDigits(summary.reservationsOpen, numerals) : '—'}
+          </div>
+          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+            {t.planning.reservationStatus.PENDING} / {t.planning.reservationStatus.CONFIRMED}
+          </p>
+        </Link>
+
+        <Link
+          to="/contracts"
+          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 hover:border-blue-400 dark:hover:border-blue-700 transition-colors"
+        >
+          <div className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">
+            <FileText className="w-4 h-4 text-indigo-700 dark:text-indigo-400" />
+            <span>{t.contracts.tabContracts}</span>
+          </div>
+          <div className="text-2xl font-semibold font-mono-tabular text-slate-900 dark:text-slate-100">
+            {summary ? formatDigits(summary.contractsActive, numerals) : '—'}
+          </div>
+          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+            {t.contracts.statuses.ACTIVE} / {t.contracts.statuses.EXTENDED}
+          </p>
+        </Link>
+      </div>
+
+      {/* System & Security Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5">
           <div className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">
@@ -64,7 +155,7 @@ export function Phase1HomePage() {
             <span>{t.home.wilayaRefCard}</span>
           </div>
           <div className="text-2xl font-semibold font-mono-tabular text-slate-900 dark:text-slate-100">
-            {wilayaCount !== null ? formatDigits(wilayaCount, numerals) : '—'}
+            {summary ? formatDigits(summary.wilayas, numerals) : '—'}
           </div>
           <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">{t.home.wilayasCountLabel}</p>
         </div>

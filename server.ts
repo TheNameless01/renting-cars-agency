@@ -1,4 +1,5 @@
 import express from 'express';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
@@ -15,20 +16,82 @@ import {
   logoutUser,
   unlockSession,
 } from './electron/database/services/authService.ts';
+import { checkVehicleAvailability, getPlanningCalendar } from './electron/database/services/availabilityService.ts';
+import {
+  activateContract,
+  cancelContract,
+  completeContract,
+  createContract,
+  extendContract,
+  getContractDetail,
+  listContracts,
+} from './electron/database/services/contractService.ts';
+import {
+  addCustomerRiskRecord,
+  archiveCustomer,
+  checkCustomerEligibility,
+  createCustomer,
+  getCustomerProfile,
+  listCustomers,
+  readCustomerDocument,
+  resolveCustomerRiskRecord,
+  updateCustomer,
+  uploadCustomerDocument,
+} from './electron/database/services/customerService.ts';
+import {
+  archiveVehicle,
+  createVehicle,
+  createVehicleBlockedPeriod,
+  getVehicleProfile,
+  listVehicles,
+  releaseVehicleBlockedPeriod,
+  updateVehicle,
+  upsertVehicleDocument,
+} from './electron/database/services/fleetService.ts';
+import {
+  calculateRentalPrice,
+  createSeasonalRate,
+  deleteSeasonalRate,
+  listPricingRules,
+  upsertCustomerCustomRate,
+} from './electron/database/services/pricingService.ts';
+import {
+  createReservation,
+  listReservations,
+  updateReservationStatus,
+} from './electron/database/services/reservationService.ts';
 import { getAllSettings, updateSettingsBatch } from './electron/database/services/settingsService.ts';
 import { createUser, listAllPermissions, listUsers, updateUser } from './electron/database/services/userService.ts';
 import { listWilayas, upsertWilaya } from './electron/database/services/wilayaService.ts';
-import { AuthError, requireAuthenticatedSession, requirePermission } from './electron/security/rbac.ts';
+import { getOrCreateLocalVaultKey } from './electron/security/crypto.ts';
+import { AuthError, requireAuthenticatedSession, requirePermission, resolveEffectivePermissions } from './electron/security/rbac.ts';
 import { SessionStore } from './electron/security/sessionStore.ts';
 import { PREVIEW_ENDPOINTS } from './shared/api/previewContracts.ts';
 import {
   BootstrapAdminSchema,
+  CalculatePriceSchema,
   ChangePasswordSchema,
+  CompleteContractSchema,
+  CreateBlockedPeriodSchema,
+  CreateContractPhase2Schema,
+  CreateCustomerSchema,
+  CreateReservationSchema,
+  CreateRiskRecordSchema,
+  CreateSeasonalRateSchema,
   CreateUserSchema,
+  CreateVehicleSchema,
+  ExtendContractSchema,
   LoginSchema,
+  ResolveRiskRecordSchema,
   UnlockSessionSchema,
+  UpdateCustomerSchema,
+  UpdateReservationStatusSchema,
   UpdateSettingsBatchSchema,
   UpdateUserSchema,
+  UpdateVehicleSchema,
+  UploadCustomerDocSchema,
+  UpsertCustomerCustomRateSchema,
+  UpsertVehicleDocSchema,
   UpsertWilayaSchema,
 } from './shared/schemas/index.ts';
 import type { PermissionCode } from './shared/types/domain.ts';
@@ -37,12 +100,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export function createPreviewExpressApp(customDbPath?: string) {
   const app = express();
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '12mb' }));
 
-  // SECURITY BOUNDARY: Strictly isolated temporary SQLite database in os.tmpdir() (or test temp path).
+  // SECURITY BOUNDARY: Strictly isolated temporary SQLite database & vault in os.tmpdir() (or test temp path).
   const previewDbPath = customDbPath
     ? path.resolve(customDbPath)
     : resolveDatabasePath({ scope: 'browser_preview_temp' });
+  const previewVaultDir = customDbPath
+    ? path.join(path.dirname(previewDbPath), 'preview_vault')
+    : path.join(os.tmpdir(), 'algeria_car_rental_erp_preview', 'vault');
+  const previewVaultKey = getOrCreateLocalVaultKey(previewVaultDir);
+
   const db = openSqliteConnection(previewDbPath);
   const migrationsDir = path.resolve(__dirname, 'electron/database/migrations');
   runMigrations(db, migrationsDir);
@@ -54,6 +122,14 @@ export function createPreviewExpressApp(customDbPath?: string) {
     const auth = req.headers.authorization;
     if (!auth || !auth.startsWith('Bearer ')) return null;
     return auth.slice(7).trim();
+  };
+
+  const hasLivePerm = (userId: number, perm: PermissionCode) => {
+    const row = db
+      .prepare<[number], { role_id: number }>('SELECT role_id FROM users WHERE id = ? AND is_active = 1')
+      .get(userId);
+    if (!row) return false;
+    return resolveEffectivePermissions(db, userId, row.role_id).includes(perm);
   };
 
   const handleError = (res: express.Response, err: unknown) => {
@@ -314,12 +390,488 @@ export function createPreviewExpressApp(customDbPath?: string) {
     }
   });
 
+  // ============================================================================
+  // Phase 2: Fleet Management
+  // ============================================================================
+  app.get(PREVIEW_ENDPOINTS.VEHICLES, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'vehicles:read');
+      const data = listVehicles(db, {
+        search: typeof req.query.search === 'string' ? req.query.search : undefined,
+        status: typeof req.query.status === 'string' ? req.query.status : undefined,
+        category: typeof req.query.category === 'string' ? req.query.category : undefined,
+        includeArchived: req.query.includeArchived === 'true',
+      });
+      res.json({ ok: true, data });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.VEHICLES}/:id`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'vehicles:read');
+      res.json({ ok: true, data: getVehicleProfile(db, Number(req.params.id)) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(PREVIEW_ENDPOINTS.VEHICLES, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'vehicles:write');
+      const parsed = CreateVehicleSchema.parse(req.body);
+      const created = createVehicle(db, { id: session.userId, username: session.username }, parsed);
+      res.status(201).json({ ok: true, data: created });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.patch(`${PREVIEW_ENDPOINTS.VEHICLES}/:id`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'vehicles:write');
+      const parsed = UpdateVehicleSchema.parse({ ...req.body, id: Number(req.params.id) });
+      const updated = updateVehicle(db, { id: session.userId, username: session.username }, parsed);
+      res.json({ ok: true, data: updated });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.VEHICLES}/:id/archive`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'vehicles:write');
+      archiveVehicle(db, { id: session.userId, username: session.username }, Number(req.params.id));
+      res.json({ ok: true, data: { archived: true } });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.VEHICLES}/:id/documents`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'vehicles:write');
+      const parsed = UpsertVehicleDocSchema.parse({ ...req.body, vehicleId: Number(req.params.id) });
+      const saved = upsertVehicleDocument(db, { id: session.userId, username: session.username }, parsed);
+      res.json({ ok: true, data: saved });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.VEHICLES}/:id/blocks`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'vehicles:write');
+      const parsed = CreateBlockedPeriodSchema.parse({ ...req.body, vehicleId: Number(req.params.id) });
+      const created = createVehicleBlockedPeriod(db, { id: session.userId, username: session.username }, parsed);
+      res.status(201).json({ ok: true, data: created });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.VEHICLES}/blocks/:blockId/release`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'vehicles:write');
+      releaseVehicleBlockedPeriod(db, { id: session.userId, username: session.username }, Number(req.params.blockId));
+      res.json({ ok: true, data: { released: true } });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  // ============================================================================
+  // Phase 2: Customers & Risk Management
+  // ============================================================================
+  app.get(PREVIEW_ENDPOINTS.CUSTOMERS, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'customers:read');
+      const data = listCustomers(db, {
+        search: typeof req.query.search === 'string' ? req.query.search : undefined,
+        customerType: typeof req.query.customerType === 'string' ? req.query.customerType : undefined,
+        riskStatus: typeof req.query.riskStatus === 'string' ? req.query.riskStatus : undefined,
+        includeArchived: req.query.includeArchived === 'true',
+      });
+      res.json({ ok: true, data });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.CUSTOMERS}/:id`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'customers:read');
+      res.json({ ok: true, data: getCustomerProfile(db, Number(req.params.id)) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(PREVIEW_ENDPOINTS.CUSTOMERS, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'customers:write');
+      const parsed = CreateCustomerSchema.parse(req.body);
+      const created = createCustomer(db, { id: session.userId, username: session.username }, parsed);
+      res.status(201).json({ ok: true, data: created });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.patch(`${PREVIEW_ENDPOINTS.CUSTOMERS}/:id`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'customers:write');
+      const parsed = UpdateCustomerSchema.parse({ ...req.body, id: Number(req.params.id) });
+      const updated = updateCustomer(db, { id: session.userId, username: session.username }, parsed);
+      res.json({ ok: true, data: updated });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.CUSTOMERS}/:id/archive`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'customers:write');
+      archiveCustomer(db, { id: session.userId, username: session.username }, Number(req.params.id));
+      res.json({ ok: true, data: { archived: true } });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.CUSTOMERS}/:id/risk`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'customers:write');
+      const parsed = CreateRiskRecordSchema.parse({ ...req.body, customerId: Number(req.params.id) });
+      const created = addCustomerRiskRecord(db, { id: session.userId, username: session.username }, parsed);
+      res.status(201).json({ ok: true, data: created });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.CUSTOMERS}/risk/:riskRecordId/resolve`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'customers:override_blacklist');
+      const parsed = ResolveRiskRecordSchema.parse({
+        ...req.body,
+        riskRecordId: Number(req.params.riskRecordId),
+      });
+      const resolved = resolveCustomerRiskRecord(db, { id: session.userId, username: session.username }, parsed);
+      res.json({ ok: true, data: resolved });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.CUSTOMERS}/:id/documents`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'customers:write');
+      const parsed = UploadCustomerDocSchema.parse({ ...req.body, customerId: Number(req.params.id) });
+      const saved = uploadCustomerDocument(
+        db,
+        { id: session.userId, username: session.username },
+        previewVaultDir,
+        previewVaultKey,
+        parsed
+      );
+      res.status(201).json({ ok: true, data: saved });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.CUSTOMERS}/documents/:docId`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'customers:read');
+      const doc = readCustomerDocument(db, previewVaultDir, previewVaultKey, Number(req.params.docId));
+      res.json({ ok: true, data: doc });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.CUSTOMERS}/:id/eligibility`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'customers:read');
+      const rentalEndDate = String(req.body?.rentalEndDate || new Date().toISOString());
+      res.json({ ok: true, data: checkCustomerEligibility(db, Number(req.params.id), rentalEndDate) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  // ============================================================================
+  // Phase 2: Pricing Engine
+  // ============================================================================
+  app.post(`${PREVIEW_ENDPOINTS.PRICING}/calculate`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'contracts:read');
+      const parsed = CalculatePriceSchema.parse(req.body);
+      res.json({ ok: true, data: calculateRentalPrice(db, parsed) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.PRICING}/rules`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'contracts:read');
+      res.json({ ok: true, data: listPricingRules(db) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.PRICING}/seasonal`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'settings:manage');
+      const parsed = CreateSeasonalRateSchema.parse(req.body);
+      const created = createSeasonalRate(db, { id: session.userId, username: session.username }, parsed);
+      res.status(201).json({ ok: true, data: created });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.delete(`${PREVIEW_ENDPOINTS.PRICING}/seasonal/:id`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'settings:manage');
+      deleteSeasonalRate(db, { id: session.userId, username: session.username }, Number(req.params.id));
+      res.json({ ok: true, data: { deleted: true } });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.PRICING}/customer-rates`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'settings:manage');
+      const parsed = UpsertCustomerCustomRateSchema.parse(req.body);
+      const saved = upsertCustomerCustomRate(db, { id: session.userId, username: session.username }, parsed);
+      res.status(201).json({ ok: true, data: saved });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  // ============================================================================
+  // Phase 2: Planning & Reservations
+  // ============================================================================
+  app.get(`${PREVIEW_ENDPOINTS.PLANNING}/calendar`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'contracts:read');
+      const startDate = String(req.query.startDate || '');
+      const endDate = String(req.query.endDate || '');
+      if (!startDate || !endDate) {
+        throw new AuthError('VALIDATION_ERROR', 'startDate et endDate requis');
+      }
+      res.json({ ok: true, data: getPlanningCalendar(db, startDate, endDate) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.PLANNING}/check-availability`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'contracts:read');
+      const { vehicleId, startDate, endDate, excludeContractId, excludeReservationId } = req.body || {};
+      res.json({
+        ok: true,
+        data: checkVehicleAvailability(db, {
+          vehicleId: Number(vehicleId),
+          startDate: String(startDate),
+          endDate: String(endDate),
+          excludeContractId: excludeContractId ? Number(excludeContractId) : undefined,
+          excludeReservationId: excludeReservationId ? Number(excludeReservationId) : undefined,
+        }),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(PREVIEW_ENDPOINTS.RESERVATIONS, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'contracts:read');
+      const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+      res.json({ ok: true, data: listReservations(db, status) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(PREVIEW_ENDPOINTS.RESERVATIONS, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'contracts:write');
+      const parsed = CreateReservationSchema.parse(req.body);
+      const created = createReservation(db, { id: session.userId, username: session.username }, parsed);
+      res.status(201).json({ ok: true, data: created });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.patch(`${PREVIEW_ENDPOINTS.RESERVATIONS}/:id/status`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'contracts:write');
+      const parsed = UpdateReservationStatusSchema.parse({
+        ...req.body,
+        reservationId: Number(req.params.id),
+      });
+      const updated = updateReservationStatus(db, { id: session.userId, username: session.username }, parsed);
+      res.json({ ok: true, data: updated });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  // ============================================================================
+  // Phase 2: Rental Contracts & Extensions
+  // ============================================================================
+  app.get(PREVIEW_ENDPOINTS.CONTRACTS, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'contracts:read');
+      const data = listContracts(db, {
+        status: typeof req.query.status === 'string' ? req.query.status : undefined,
+        search: typeof req.query.search === 'string' ? req.query.search : undefined,
+      });
+      res.json({ ok: true, data });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.CONTRACTS}/:id`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'contracts:read');
+      res.json({ ok: true, data: getContractDetail(db, Number(req.params.id)) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(PREVIEW_ENDPOINTS.CONTRACTS, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'contracts:write');
+      const parsed = CreateContractPhase2Schema.parse(req.body);
+      const created = createContract(
+        db,
+        { id: session.userId, username: session.username },
+        {
+          canOverrideBlacklist: hasLivePerm(session.userId, 'customers:override_blacklist'),
+          canApproveDiscount: hasLivePerm(session.userId, 'finance:approve_adjustment'),
+        },
+        parsed
+      );
+      res.status(201).json({ ok: true, data: created });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.CONTRACTS}/:id/activate`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'contracts:write');
+      const departureOdometerKm =
+        req.body?.departureOdometerKm != null ? Number(req.body.departureOdometerKm) : undefined;
+      const updated = activateContract(
+        db,
+        { id: session.userId, username: session.username },
+        Number(req.params.id),
+        departureOdometerKm
+      );
+      res.json({ ok: true, data: updated });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.CONTRACTS}/:id/extend`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'contracts:extend');
+      const parsed = ExtendContractSchema.parse({ ...req.body, contractId: Number(req.params.id) });
+      const updated = extendContract(db, { id: session.userId, username: session.username }, parsed);
+      res.json({ ok: true, data: updated });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.CONTRACTS}/:id/complete`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'contracts:write');
+      const parsed = CompleteContractSchema.parse({ ...req.body, contractId: Number(req.params.id) });
+      const updated = completeContract(
+        db,
+        { id: session.userId, username: session.username },
+        hasLivePerm(session.userId, 'finance:approve_adjustment'),
+        parsed
+      );
+      res.json({ ok: true, data: updated });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.CONTRACTS}/:id/cancel`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'contracts:cancel');
+      const reason = String(req.body?.reason || 'Annulation contrat');
+      const updated = cancelContract(
+        db,
+        { id: session.userId, username: session.username },
+        Number(req.params.id),
+        reason
+      );
+      res.json({ ok: true, data: updated });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
   // Reject any unknown /api/* path cleanly (never expose production DB or static FS)
   app.use('/api', (_req, res) => {
     res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Endpoint API introuvable' } });
   });
 
-  return { app, db, previewDbPath, previewSessionStore };
+  return { app, db, previewDbPath, previewVaultDir, previewSessionStore };
 }
 
 async function startServer() {

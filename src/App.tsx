@@ -4,9 +4,17 @@ import type { AppLanguage, AppTheme, NumeralSystem } from '../shared/types/domai
 import { ToastProvider } from './components/Toast.tsx';
 import { AuthScreen } from './features/auth/AuthScreen.tsx';
 import { LockOverlay } from './features/auth/LockOverlay.tsx';
+import { ContractDetailPage } from './features/contracts/ContractDetailPage.tsx';
+import { ContractsPage } from './features/contracts/ContractsPage.tsx';
+import { NewContractWizardPage } from './features/contracts/NewContractWizardPage.tsx';
+import { CustomerProfilePage } from './features/customers/CustomerProfilePage.tsx';
+import { CustomersPage } from './features/customers/CustomersPage.tsx';
 import { Phase1HomePage } from './features/home/Phase1HomePage.tsx';
+import { PlanningPage } from './features/planning/PlanningPage.tsx';
 import { SettingsPage } from './features/settings/SettingsPage.tsx';
 import { UsersPage } from './features/users/UsersPage.tsx';
+import { VehicleProfilePage } from './features/vehicles/VehicleProfilePage.tsx';
+import { VehiclesPage } from './features/vehicles/VehiclesPage.tsx';
 import { AuthProvider, useAuth } from './hooks/useAuth.tsx';
 import { I18nProvider, useI18n } from './hooks/useI18n.tsx';
 import { ThemeProvider, useTheme } from './hooks/useTheme.tsx';
@@ -55,6 +63,14 @@ function AppContent() {
       <ErpLayout>
         <Routes>
           <Route path="/" element={<Phase1HomePage />} />
+          <Route path="/vehicles" element={<VehiclesPage />} />
+          <Route path="/vehicles/:id" element={<VehicleProfilePage />} />
+          <Route path="/planning" element={<PlanningPage />} />
+          <Route path="/customers" element={<CustomersPage />} />
+          <Route path="/customers/:id" element={<CustomerProfilePage />} />
+          <Route path="/contracts" element={<ContractsPage />} />
+          <Route path="/contracts/new" element={<NewContractWizardPage />} />
+          <Route path="/contracts/:id" element={<ContractDetailPage />} />
           <Route path="/users" element={<UsersPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

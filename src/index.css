@@ -12,6 +12,11 @@
     font-family: var(--font-latin);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    color-scheme: light;
+  }
+
+  html.dark {
+    color-scheme: dark;
   }
 
   html[dir="rtl"] {

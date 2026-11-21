@@ -230,3 +230,117 @@ export const InventoryMovementSchema = z.object({
   notes: z.string().max(500).nullable().optional(),
   overrideReason: z.string().max(500).nullable().optional(),
 });
+
+// Phase 2 Additions
+export const UpdateVehicleSchema = CreateVehicleSchema.partial().extend({
+  id: z.number().int().positive(),
+  status: z.enum(['AVAILABLE', 'RENTED', 'RESERVED', 'MAINTENANCE']).optional(),
+});
+
+export const UpsertVehicleDocSchema = z.object({
+  id: z.number().int().positive().optional(),
+  vehicleId: z.number().int().positive(),
+  docType: z.enum(['CARTE_GRISE', 'ASSURANCE', 'VIGNETTE', 'CONTROLE_TECHNIQUE']),
+  documentNumber: z.string().trim().max(100).nullable().optional(),
+  issueDate: z.string().nullable().optional(),
+  expirationDate: z.string().min(8),
+  reminderDays: z.number().int().min(0).max(365).default(30),
+  notes: z.string().max(500).nullable().optional(),
+});
+
+export const CreateBlockedPeriodSchema = z.object({
+  vehicleId: z.number().int().positive(),
+  blockType: z.enum(['MAINTENANCE', 'ADMIN_HOLD', 'OTHER']),
+  startDate: z.string().min(10),
+  endDate: z.string().min(10),
+  reason: z.string().trim().min(3).max(500),
+});
+
+export const UpdateCustomerSchema = CreateCustomerSchema.partial().extend({
+  id: z.number().int().positive(),
+});
+
+export const ResolveRiskRecordSchema = z.object({
+  riskRecordId: z.number().int().positive(),
+  resolutionNotes: z.string().trim().min(3).max(1000),
+  nextCustomerRiskStatus: z.enum(['LOW', 'MEDIUM', 'HIGH', 'BLACKLISTED']).optional(),
+});
+
+export const UploadCustomerDocSchema = z.object({
+  customerId: z.number().int().positive(),
+  docCategory: z.enum(['CNI', 'PASSPORT', 'DRIVING_LICENCE', 'COMPANY_RC', 'COMPANY_NIF', 'BON_COMMANDE', 'OTHER']),
+  originalFileName: z.string().trim().min(1).max(200),
+  mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']),
+  base64Data: z.string().min(4).max(8_000_000),
+});
+
+export const CreateReservationSchema = z.object({
+  customerId: z.number().int().positive(),
+  vehicleId: z.number().int().positive(),
+  startDate: z.string().min(10),
+  expectedReturnDate: z.string().min(10),
+  estimatedTotalMinor: z.number().int().min(0).default(0),
+  status: z.enum(['PENDING', 'CONFIRMED']).default('CONFIRMED'),
+  notes: z.string().max(1000).nullable().optional(),
+});
+
+export const UpdateReservationStatusSchema = z.object({
+  reservationId: z.number().int().positive(),
+  status: z.enum(['PENDING', 'CONFIRMED', 'CANCELLED', 'NO_SHOW']),
+  notes: z.string().max(1000).nullable().optional(),
+});
+
+export const CalculatePriceSchema = z.object({
+  vehicleId: z.number().int().positive(),
+  customerId: z.number().int().positive().nullable().optional(),
+  startDate: z.string().min(10),
+  endDate: z.string().min(10),
+  pricingTier: z.enum(['AUTO', 'DAILY', 'WEEKLY', 'MONTHLY', 'CUSTOM']).default('AUTO'),
+  customDailyRateMinor: z.number().int().min(0).nullable().optional(),
+  customTotalMinor: z.number().int().min(0).nullable().optional(),
+  discountType: z.enum(['NONE', 'FIXED', 'PERCENT']).default('NONE'),
+  discountValue: z.number().min(0).default(0),
+});
+
+export const CreateSeasonalRateSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  vehicleCategory: z.string().trim().max(64).nullable().optional(),
+  vehicleId: z.number().int().positive().nullable().optional(),
+  startDate: z.string().min(8),
+  endDate: z.string().min(8),
+  dailyRateMinor: z.number().int().min(0),
+  weeklyRateMinor: z.number().int().min(0).nullable().optional(),
+  monthlyRateMinor: z.number().int().min(0).nullable().optional(),
+});
+
+export const UpsertCustomerCustomRateSchema = z.object({
+  customerId: z.number().int().positive(),
+  vehicleCategory: z.string().trim().max(64).nullable().optional(),
+  vehicleId: z.number().int().positive().nullable().optional(),
+  dailyRateMinor: z.number().int().min(0).nullable().optional(),
+  weeklyRateMinor: z.number().int().min(0).nullable().optional(),
+  monthlyRateMinor: z.number().int().min(0).nullable().optional(),
+  defaultDiscountPercent: z.number().min(0).max(100).default(0),
+  notes: z.string().max(500).nullable().optional(),
+});
+
+export const CreateContractPhase2Schema = CreateContractSchema.extend({
+  initialStatus: z.enum(['DRAFT', 'CONFIRMED', 'ACTIVE']).default('CONFIRMED'),
+  pricingTier: z.enum(['AUTO', 'DAILY', 'WEEKLY', 'MONTHLY', 'CUSTOM']).default('AUTO'),
+  discountType: z.enum(['NONE', 'FIXED', 'PERCENT']).default('NONE'),
+  discountValue: z.number().min(0).default(0),
+  pricingBreakdownLabel: z.string().max(240).optional(),
+  discountAuthorizationReason: z.string().max(500).nullable().optional(),
+});
+
+export const CompleteContractSchema = z.object({
+  contractId: z.number().int().positive(),
+  actualReturnDate: z.string().min(10),
+  returnOdometerKm: z.number().int().min(0),
+  odometerCorrectionReason: z.string().max(500).nullable().optional(),
+  lateFeeMinor: z.number().int().min(0).default(0),
+  damageChargeMinor: z.number().int().min(0).default(0),
+  otherChargesMinor: z.number().int().min(0).default(0),
+  notes: z.string().max(1000).nullable().optional(),
+});
+

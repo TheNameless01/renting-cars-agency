@@ -2,12 +2,29 @@ import type Database from 'better-sqlite3';
 import { ZodError } from 'zod';
 import {
   BootstrapAdminSchema,
+  CalculatePriceSchema,
   ChangePasswordSchema,
+  CompleteContractSchema,
+  CreateBlockedPeriodSchema,
+  CreateContractPhase2Schema,
+  CreateCustomerSchema,
+  CreateReservationSchema,
+  CreateRiskRecordSchema,
+  CreateSeasonalRateSchema,
   CreateUserSchema,
+  CreateVehicleSchema,
+  ExtendContractSchema,
   LoginSchema,
+  ResolveRiskRecordSchema,
   UnlockSessionSchema,
+  UpdateCustomerSchema,
+  UpdateReservationStatusSchema,
   UpdateSettingsBatchSchema,
   UpdateUserSchema,
+  UpdateVehicleSchema,
+  UploadCustomerDocSchema,
+  UpsertCustomerCustomRateSchema,
+  UpsertVehicleDocSchema,
   UpsertWilayaSchema,
 } from '../../shared/schemas/index.ts';
 import type { PermissionCode } from '../../shared/types/domain.ts';
@@ -21,10 +38,54 @@ import {
   logoutUser,
   unlockSession,
 } from '../database/services/authService.ts';
+import { checkVehicleAvailability, getPlanningCalendar } from '../database/services/availabilityService.ts';
+import {
+  activateContract,
+  cancelContract,
+  completeContract,
+  createContract,
+  extendContract,
+  getContractDetail,
+  listContracts,
+} from '../database/services/contractService.ts';
+import {
+  addCustomerRiskRecord,
+  archiveCustomer,
+  checkCustomerEligibility,
+  createCustomer,
+  getCustomerProfile,
+  listCustomers,
+  readCustomerDocument,
+  resolveCustomerRiskRecord,
+  updateCustomer,
+  uploadCustomerDocument,
+} from '../database/services/customerService.ts';
+import {
+  archiveVehicle,
+  createVehicle,
+  createVehicleBlockedPeriod,
+  getVehicleProfile,
+  listVehicles,
+  releaseVehicleBlockedPeriod,
+  updateVehicle,
+  upsertVehicleDocument,
+} from '../database/services/fleetService.ts';
+import {
+  calculateRentalPrice,
+  createSeasonalRate,
+  deleteSeasonalRate,
+  listPricingRules,
+  upsertCustomerCustomRate,
+} from '../database/services/pricingService.ts';
+import {
+  createReservation,
+  listReservations,
+  updateReservationStatus,
+} from '../database/services/reservationService.ts';
 import { getAllSettings, updateSettingsBatch } from '../database/services/settingsService.ts';
 import { createUser, listAllPermissions, listUsers, updateUser } from '../database/services/userService.ts';
 import { listWilayas, upsertWilaya } from '../database/services/wilayaService.ts';
-import { AuthError, requireAuthenticatedSession, requirePermission } from '../security/rbac.ts';
+import { AuthError, requireAuthenticatedSession, requirePermission, resolveEffectivePermissions } from '../security/rbac.ts';
 import type { SessionStore } from '../security/sessionStore.ts';
 import { IPC_CHANNELS, type IpcChannel, type IpcResult } from '../ipc/contracts.ts';
 
@@ -35,13 +96,19 @@ export interface IpcEnvelope<T = unknown> {
 
 export type IpcHandlerFn = (payload?: unknown) => Promise<IpcResult<unknown>>;
 
+export interface IpcVaultContext {
+  vaultRootDir: string;
+  vaultKey: Buffer;
+}
+
 /**
  * Creates the desktop IPC handler map backed by SQLite + Zod + RBAC.
  * Testable independently from Electron GUI runtime.
  */
 export function createIpcHandlers(
   db: Database.Database,
-  sessionStore: SessionStore
+  sessionStore: SessionStore,
+  vault?: IpcVaultContext
 ): Record<string, IpcHandlerFn> {
   const wrap = (fn: (envelope: IpcEnvelope<any>) => unknown): IpcHandlerFn => {
     return async (rawPayload?: unknown) => {
@@ -81,6 +148,14 @@ export function createIpcHandlers(
         };
       }
     };
+  };
+
+  const hasLivePerm = (userId: number, perm: PermissionCode) => {
+    const row = db
+      .prepare<[number], { role_id: number }>('SELECT role_id FROM users WHERE id = ? AND is_active = 1')
+      .get(userId);
+    if (!row) return false;
+    return resolveEffectivePermissions(db, userId, row.role_id).includes(perm);
   };
 
   return {
@@ -207,6 +282,273 @@ export function createIpcHandlers(
       requirePermission(db, session, 'audit:view');
       const opts = (env.data as { limit?: number; entityType?: string; operation?: string } | undefined) ?? {};
       return listAuditLogs(db, opts);
+    }),
+
+    // Phase 2: Fleet Management
+    [IPC_CHANNELS.VEHICLES_LIST]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'vehicles:read');
+      return listVehicles(db, env.data as any);
+    }),
+
+    [IPC_CHANNELS.VEHICLES_GET]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'vehicles:read');
+      return getVehicleProfile(db, Number(env.data?.id ?? env.data));
+    }),
+
+    [IPC_CHANNELS.VEHICLES_CREATE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'vehicles:write');
+      const parsed = CreateVehicleSchema.parse(env.data);
+      return createVehicle(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.VEHICLES_UPDATE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'vehicles:write');
+      const parsed = UpdateVehicleSchema.parse(env.data);
+      return updateVehicle(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.VEHICLES_ARCHIVE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'vehicles:write');
+      archiveVehicle(db, { id: session.userId, username: session.username }, Number(env.data?.id ?? env.data));
+      return { archived: true };
+    }),
+
+    [IPC_CHANNELS.VEHICLES_UPSERT_DOC]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'vehicles:write');
+      const parsed = UpsertVehicleDocSchema.parse(env.data);
+      return upsertVehicleDocument(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.VEHICLES_CREATE_BLOCK]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'vehicles:write');
+      const parsed = CreateBlockedPeriodSchema.parse(env.data);
+      return createVehicleBlockedPeriod(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.VEHICLES_RELEASE_BLOCK]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'vehicles:write');
+      releaseVehicleBlockedPeriod(db, { id: session.userId, username: session.username }, Number(env.data?.blockId ?? env.data));
+      return { released: true };
+    }),
+
+    // Phase 2: Customers & Risk
+    [IPC_CHANNELS.CUSTOMERS_LIST]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'customers:read');
+      return listCustomers(db, env.data as any);
+    }),
+
+    [IPC_CHANNELS.CUSTOMERS_GET]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'customers:read');
+      return getCustomerProfile(db, Number(env.data?.id ?? env.data));
+    }),
+
+    [IPC_CHANNELS.CUSTOMERS_CREATE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'customers:write');
+      const parsed = CreateCustomerSchema.parse(env.data);
+      return createCustomer(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.CUSTOMERS_UPDATE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'customers:write');
+      const parsed = UpdateCustomerSchema.parse(env.data);
+      return updateCustomer(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.CUSTOMERS_ARCHIVE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'customers:write');
+      archiveCustomer(db, { id: session.userId, username: session.username }, Number(env.data?.id ?? env.data));
+      return { archived: true };
+    }),
+
+    [IPC_CHANNELS.CUSTOMERS_ADD_RISK]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'customers:write');
+      const parsed = CreateRiskRecordSchema.parse(env.data);
+      return addCustomerRiskRecord(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.CUSTOMERS_RESOLVE_RISK]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'customers:override_blacklist');
+      const parsed = ResolveRiskRecordSchema.parse(env.data);
+      return resolveCustomerRiskRecord(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.CUSTOMERS_UPLOAD_DOC]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'customers:write');
+      if (!vault) throw new Error('Vault non configuré');
+      const parsed = UploadCustomerDocSchema.parse(env.data);
+      return uploadCustomerDocument(
+        db,
+        { id: session.userId, username: session.username },
+        vault.vaultRootDir,
+        vault.vaultKey,
+        parsed
+      );
+    }),
+
+    [IPC_CHANNELS.CUSTOMERS_READ_DOC]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'customers:read');
+      if (!vault) throw new Error('Vault non configuré');
+      return readCustomerDocument(db, vault.vaultRootDir, vault.vaultKey, Number(env.data?.docId ?? env.data));
+    }),
+
+    [IPC_CHANNELS.CUSTOMERS_CHECK_ELIGIBILITY]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'customers:read');
+      return checkCustomerEligibility(db, Number(env.data.customerId), String(env.data.rentalEndDate));
+    }),
+
+    // Phase 2: Pricing Engine
+    [IPC_CHANNELS.PRICING_CALCULATE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'contracts:read');
+      const parsed = CalculatePriceSchema.parse(env.data);
+      return calculateRentalPrice(db, parsed);
+    }),
+
+    [IPC_CHANNELS.PRICING_LIST_RULES]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'contracts:read');
+      return listPricingRules(db);
+    }),
+
+    [IPC_CHANNELS.PRICING_CREATE_SEASONAL]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'settings:manage');
+      const parsed = CreateSeasonalRateSchema.parse(env.data);
+      return createSeasonalRate(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.PRICING_DELETE_SEASONAL]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'settings:manage');
+      deleteSeasonalRate(db, { id: session.userId, username: session.username }, Number(env.data?.id ?? env.data));
+      return { deleted: true };
+    }),
+
+    [IPC_CHANNELS.PRICING_UPSERT_CUSTOMER_RATE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'settings:manage');
+      const parsed = UpsertCustomerCustomRateSchema.parse(env.data);
+      return upsertCustomerCustomRate(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    // Phase 2: Planning & Reservations
+    [IPC_CHANNELS.PLANNING_CALENDAR]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'contracts:read');
+      return getPlanningCalendar(db, String(env.data.startDate), String(env.data.endDate));
+    }),
+
+    [IPC_CHANNELS.PLANNING_CHECK_AVAILABILITY]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'contracts:read');
+      return checkVehicleAvailability(db, env.data);
+    }),
+
+    [IPC_CHANNELS.RESERVATIONS_LIST]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'contracts:read');
+      return listReservations(db, env.data?.status);
+    }),
+
+    [IPC_CHANNELS.RESERVATIONS_CREATE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'contracts:write');
+      const parsed = CreateReservationSchema.parse(env.data);
+      return createReservation(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.RESERVATIONS_UPDATE_STATUS]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'contracts:write');
+      const parsed = UpdateReservationStatusSchema.parse(env.data);
+      return updateReservationStatus(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    // Phase 2: Rental Contracts & Extensions
+    [IPC_CHANNELS.CONTRACTS_LIST]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'contracts:read');
+      return listContracts(db, env.data as any);
+    }),
+
+    [IPC_CHANNELS.CONTRACTS_GET]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'contracts:read');
+      return getContractDetail(db, Number(env.data?.id ?? env.data));
+    }),
+
+    [IPC_CHANNELS.CONTRACTS_CREATE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'contracts:write');
+      const parsed = CreateContractPhase2Schema.parse(env.data);
+      return createContract(
+        db,
+        { id: session.userId, username: session.username },
+        {
+          canOverrideBlacklist: hasLivePerm(session.userId, 'customers:override_blacklist'),
+          canApproveDiscount: hasLivePerm(session.userId, 'finance:approve_adjustment'),
+        },
+        parsed
+      );
+    }),
+
+    [IPC_CHANNELS.CONTRACTS_ACTIVATE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'contracts:write');
+      return activateContract(
+        db,
+        { id: session.userId, username: session.username },
+        Number(env.data.contractId),
+        env.data.departureOdometerKm != null ? Number(env.data.departureOdometerKm) : undefined
+      );
+    }),
+
+    [IPC_CHANNELS.CONTRACTS_EXTEND]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'contracts:extend');
+      const parsed = ExtendContractSchema.parse(env.data);
+      return extendContract(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.CONTRACTS_COMPLETE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'contracts:write');
+      const parsed = CompleteContractSchema.parse(env.data);
+      return completeContract(
+        db,
+        { id: session.userId, username: session.username },
+        hasLivePerm(session.userId, 'finance:approve_adjustment'),
+        parsed
+      );
+    }),
+
+    [IPC_CHANNELS.CONTRACTS_CANCEL]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'contracts:cancel');
+      return cancelContract(
+        db,
+        { id: session.userId, username: session.username },
+        Number(env.data.contractId),
+        String(env.data.reason || 'Annulation contrat')
+      );
     }),
   };
 }

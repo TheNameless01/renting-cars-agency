@@ -10,7 +10,7 @@
 
 ---
 
-### 2. Entity Groups & Table Definitions (40 Tables)
+### 2. Entity Groups & Table Definitions (43 Tables)
 
 #### Group A — Identity, RBAC & Audit (6 tables)
 | Table | Purpose | Key Constraints & Relationships |
@@ -27,25 +27,28 @@
 | :--- | :--- | :--- |
 | `wilayas` | Editable 69-wilaya directory (incl. 2026 division) | `PK(code)`, `is_newly_created_2026`, `FK(parent_wilaya_code -> wilayas.code)`, `decree_reference`, `effective_year` |
 
-#### Group B — Fleet Management (3 tables)
+#### Group B — Fleet Management (4 tables)
 | Table | Purpose | Key Constraints & Relationships |
 | :--- | :--- | :--- |
 | `vehicles` | Passenger car registry | `PK(id)`, `UNIQUE(internal_code)`, `UNIQUE(matricule)`, `UNIQUE(vin)`, `CHECK(fuel_type)`, `CHECK(transmission)`, `CHECK(status)` |
 | `vehicle_documents` | Carte grise, Assurance, Vignette, Contrôle technique | `PK(id)`, `FK(vehicle_id -> vehicles.id RESTRICT)`, `expiration_date`, `reminder_days` |
 | `vehicle_photos` | Vehicle gallery assets | `PK(id)`, `FK(vehicle_id -> vehicles.id CASCADE)` |
+| `vehicle_blocked_periods` | Explicit vehicle unavailability blocks (`MAINTENANCE`, `ADMIN_HOLD`, `OTHER`) *(Migration 003)* | `PK(id)`, `FK(vehicle_id -> vehicles.id RESTRICT)`, `FK(created_by_user_id)`, `FK(released_by_user_id)`, `CHECK(end_date > start_date)` |
 
-#### Group C — Customers & Risk Management (4 tables)
+#### Group C — Customers & Risk Management (5 tables)
 | Table | Purpose | Key Constraints & Relationships |
 | :--- | :--- | :--- |
 | `customers` | Individuals (`INDIVIDUAL`) and Companies (`COMPANY`) | `PK(id)`, `CHECK(customer_type)`, `CHECK(risk_status)` (`LOW/MEDIUM/HIGH/BLACKLISTED`), `wilaya_code` (`01..69`) |
 | `customer_companies` | Corporate fiscal identifiers (RC, NIF, NIS, ART, Bon de commande) | `PK(id)`, `UNIQUE(customer_id)`, `FK(customer_id -> customers.id CASCADE)` |
 | `customer_documents` | Encrypted CNI, Passport, Driving licence & company files | `PK(id)`, `FK(customer_id -> customers.id RESTRICT)`, `FK(uploaded_by_user_id -> users.id)` |
 | `customer_risk_records` | Documented risk incidents & blacklist justifications | `PK(id)`, `FK(customer_id)`, `FK(reported_by_user_id)`, `FK(resolved_by_user_id)` |
+| `customer_custom_rates` | Customer-specific negotiated rates & default discounts *(Migration 003)* | `PK(id)`, `FK(customer_id -> customers.id CASCADE)`, `FK(vehicle_id -> vehicles.id CASCADE)`, `CHECK(default_discount_percent BETWEEN 0 AND 100)` |
 
-#### Group D — Reservations & Rental Contracts (4 tables)
+#### Group D — Reservations, Pricing & Rental Contracts (5 tables)
 | Table | Purpose | Key Constraints & Relationships |
 | :--- | :--- | :--- |
 | `reservations` | Advance bookings before contract confirmation | `PK(id)`, `UNIQUE(reservation_number)`, `FK(customer_id)`, `FK(vehicle_id)`, `CHECK(expected_return_date > start_date)` |
+| `seasonal_rates` | Date-range seasonal pricing overrides per vehicle or category *(Migration 003)* | `PK(id)`, `FK(vehicle_id -> vehicles.id CASCADE)`, `CHECK(end_date >= start_date)` |
 | `rental_contracts` | Central contract ledger | `PK(id)`, `UNIQUE(contract_number)`, `FK(reservation_id)`, `FK(customer_id)`, `FK(vehicle_id)`, `CHECK(original_end_date > start_date)`, `CHECK(expected_return_date >= original_end_date)` |
 | `rental_extensions` | Traceable contract extension history | `PK(id)`, `FK(contract_id -> rental_contracts.id RESTRICT)`, `CHECK(new_return_date > previous_return_date)`, `CHECK(added_days > 0)` |
 | `contract_pricing_items` | Transparent breakdown of rates, discounts, fees & adjustments | `PK(id)`, `FK(contract_id)`, `FK(authorized_by_user_id)` |
@@ -97,8 +100,11 @@
 ### 3. Key Indexes
 - `idx_vehicles_status` (`vehicles(status, is_archived)`)
 - `idx_vehicle_docs_expiry` (`vehicle_documents(expiration_date, doc_type)`)
+- `idx_blocked_periods_vehicle_dates` (`vehicle_blocked_periods(vehicle_id, is_active, start_date, end_date)`)
 - `idx_customers_phone`, `idx_customers_name`, `idx_customers_risk`
+- `idx_customer_custom_rates_cust` (`customer_custom_rates(customer_id, is_active)`)
 - `idx_reservations_vehicle_dates` (`reservations(vehicle_id, status, start_date, expected_return_date)`)
+- `idx_seasonal_rates_dates` (`seasonal_rates(is_active, start_date, end_date)`)
 - `idx_contracts_vehicle_dates` (`rental_contracts(vehicle_id, status, start_date, expected_return_date)`)
 - `idx_contracts_customer` (`rental_contracts(customer_id, status)`)
 - `idx_payments_contract`, `idx_payments_customer`, `idx_deposits_status`

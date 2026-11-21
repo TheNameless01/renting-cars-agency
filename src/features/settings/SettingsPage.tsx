@@ -2,6 +2,7 @@ import { Edit3, Plus, RefreshCw, Save } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { fromMinorUnits, toMinorUnits } from '../../../shared/constants/algeria.ts';
 import type { AppLanguage, AppTheme, AuditLogEntry, NumeralSystem } from '../../../shared/types/domain.ts';
+import { ModalDialog } from '../../components/ModalDialog.tsx';
 import { useToast } from '../../components/Toast.tsx';
 import { useAuth } from '../../hooks/useAuth.tsx';
 import { useI18n } from '../../hooks/useI18n.tsx';
@@ -564,89 +565,98 @@ export function SettingsPage() {
       )}
 
       {/* Edit/Add Wilaya Modal */}
-      {editingWilaya && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6">
-            <h3 className="text-base font-semibold mb-4">
-              {editingWilaya.code ? `${t.settings.wilayas.editWilaya} — ${editingWilaya.code}` : t.settings.wilayas.addWilaya}
-            </h3>
-            <form onSubmit={handleSaveWilaya} className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <TextField
-                  label={t.settings.wilayas.code}
-                  value={editingWilaya.code}
-                  dir="ltr"
-                  onChange={(v) => setEditingWilaya({ ...editingWilaya, code: v })}
-                />
-                <NumberField
-                  label={t.settings.wilayas.effectiveYear}
-                  value={String(editingWilaya.effectiveYear)}
-                  onChange={(v) => setEditingWilaya({ ...editingWilaya, effectiveYear: Number(v) || 2026 })}
-                />
-              </div>
+      <ModalDialog
+        open={Boolean(editingWilaya)}
+        onClose={() => setEditingWilaya(null)}
+        title={
+          editingWilaya
+            ? editingWilaya.code
+              ? `${t.settings.wilayas.editWilaya} — ${editingWilaya.code}`
+              : t.settings.wilayas.addWilaya
+            : ''
+        }
+        size="sm"
+        onSubmit={handleSaveWilaya}
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setEditingWilaya(null)}
+              className="px-3.5 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              {t.auth.cancel}
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 rounded-lg bg-blue-900 hover:bg-blue-800 dark:bg-blue-700 dark:hover:bg-blue-600 text-white text-xs font-medium"
+            >
+              {t.common.save}
+            </button>
+          </>
+        }
+      >
+        {editingWilaya && (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <TextField
-                label={t.settings.wilayas.nameFr}
-                value={editingWilaya.nameFr}
-                onChange={(v) => setEditingWilaya({ ...editingWilaya, nameFr: v })}
+                label={t.settings.wilayas.code}
+                value={editingWilaya.code}
+                dir="ltr"
+                onChange={(v) => setEditingWilaya({ ...editingWilaya, code: v })}
               />
+              <NumberField
+                label={t.settings.wilayas.effectiveYear}
+                value={String(editingWilaya.effectiveYear)}
+                onChange={(v) => setEditingWilaya({ ...editingWilaya, effectiveYear: Number(v) || 2026 })}
+              />
+            </div>
+            <TextField
+              label={t.settings.wilayas.nameFr}
+              value={editingWilaya.nameFr}
+              onChange={(v) => setEditingWilaya({ ...editingWilaya, nameFr: v })}
+            />
+            <TextField
+              label={t.settings.wilayas.nameAr}
+              value={editingWilaya.nameAr}
+              dir="rtl"
+              onChange={(v) => setEditingWilaya({ ...editingWilaya, nameAr: v })}
+            />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <TextField
-                label={t.settings.wilayas.nameAr}
-                value={editingWilaya.nameAr}
-                dir="rtl"
-                onChange={(v) => setEditingWilaya({ ...editingWilaya, nameAr: v })}
+                label={t.settings.wilayas.parentWilaya}
+                value={editingWilaya.parentWilayaCode ?? ''}
+                dir="ltr"
+                onChange={(v) => setEditingWilaya({ ...editingWilaya, parentWilayaCode: v || null })}
               />
-              <div className="grid grid-cols-2 gap-3">
-                <TextField
-                  label={t.settings.wilayas.parentWilaya}
-                  value={editingWilaya.parentWilayaCode ?? ''}
-                  dir="ltr"
-                  onChange={(v) => setEditingWilaya({ ...editingWilaya, parentWilayaCode: v || null })}
-                />
-                <div>
-                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                    {t.settings.wilayas.transition2026}
-                  </label>
-                  <select
-                    value={editingWilaya.isNewlyCreated2026 ? '1' : '0'}
-                    onChange={(e) =>
-                      setEditingWilaya({ ...editingWilaya, isNewlyCreated2026: e.target.value === '1' })
-                    }
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
-                  >
-                    <option value="0">{t.settings.wilayas.historicalLabel}</option>
-                    <option value="1">{t.settings.wilayas.newlyCreatedLabel}</option>
-                  </select>
-                </div>
-              </div>
-              <TextField
-                label={t.settings.wilayas.decreeRef}
-                value={editingWilaya.decreeReference ?? ''}
-                onChange={(v) => setEditingWilaya({ ...editingWilaya, decreeReference: v || null })}
-              />
-              <TextField
-                label={t.settings.wilayas.notes}
-                value={editingWilaya.notes ?? ''}
-                onChange={(v) => setEditingWilaya({ ...editingWilaya, notes: v || null })}
-              />
-              <div className="flex justify-end gap-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setEditingWilaya(null)}
-                  className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium"
+              <div>
+                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  {t.settings.wilayas.transition2026}
+                </label>
+                <select
+                  value={editingWilaya.isNewlyCreated2026 ? '1' : '0'}
+                  onChange={(e) =>
+                    setEditingWilaya({ ...editingWilaya, isNewlyCreated2026: e.target.value === '1' })
+                  }
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
                 >
-                  {t.auth.cancel}
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 rounded-lg bg-blue-900 dark:bg-blue-700 text-white text-xs font-medium"
-                >
-                  {t.common.save}
-                </button>
+                  <option value="0">{t.settings.wilayas.historicalLabel}</option>
+                  <option value="1">{t.settings.wilayas.newlyCreatedLabel}</option>
+                </select>
               </div>
-            </form>
-          </div>
-        </div>
-      )}
+            </div>
+            <TextField
+              label={t.settings.wilayas.decreeRef}
+              value={editingWilaya.decreeReference ?? ''}
+              onChange={(v) => setEditingWilaya({ ...editingWilaya, decreeReference: v || null })}
+            />
+            <TextField
+              label={t.settings.wilayas.notes}
+              value={editingWilaya.notes ?? ''}
+              onChange={(v) => setEditingWilaya({ ...editingWilaya, notes: v || null })}
+            />
+          </>
+        )}
+      </ModalDialog>
     </div>
   );
 }
