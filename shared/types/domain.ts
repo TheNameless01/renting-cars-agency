@@ -318,13 +318,43 @@ export interface Deposit {
   updatedAt: string;
 }
 
+export type DepositChargeCategory =
+  | 'DAMAGE'
+  | 'TRAFFIC_FINE'
+  | 'LATE_FEE'
+  | 'EXTRA_KM'
+  | 'CLEANING'
+  | 'FUEL'
+  | 'OTHER';
+
 export interface DepositMovement {
   id: number;
   depositId: number;
   movementType: 'RECEIVED' | 'DEDUCTED' | 'REFUNDED' | 'ADJUSTMENT';
   amountMinor: number;
+  chargeCategory?: DepositChargeCategory | null;
+  trafficFineId?: number | null;
+  paymentMethod?: PaymentMethod | null;
   reason: string | null;
   recordedByUserId: number;
+  createdAt: string;
+}
+
+export type CustomerAdjustmentType = 'CREDIT_NOTE' | 'DEBIT_CHARGE' | 'WRITE_OFF';
+
+export interface CustomerFinancialAdjustment {
+  id: number;
+  adjustmentCode: string;
+  customerId: number;
+  contractId: number | null;
+  adjustmentType: CustomerAdjustmentType;
+  amountMinor: number;
+  currency: CurrencyCode;
+  adjustmentDate: string;
+  reason: string;
+  notes: string | null;
+  authorizedByUserId: number;
+  reversalOfAdjustmentId: number | null;
   createdAt: string;
 }
 
@@ -476,13 +506,24 @@ export interface Expense {
   currency: CurrencyCode;
   expenseDate: string;
   paymentMethod: PaymentMethod;
+  paymentReference?: string | null;
+  status?: 'POSTED' | 'REVERSED';
   description: string;
   receiptFilePath: string | null;
+  receiptOriginalName?: string | null;
+  receiptMimeType?: string | null;
   recordedByUserId: number;
   createdAt: string;
 }
 
 export type CashSessionStatus = 'OPEN' | 'CLOSED';
+export type CashMovementType =
+  | 'PAYMENT_INFLOW'
+  | 'PAYMENT_REFUND'
+  | 'DEPOSIT_INFLOW'
+  | 'DEPOSIT_REFUND'
+  | 'EXPENSE'
+  | 'ADJUSTMENT';
 
 export interface CashRegisterSession {
   id: number;
@@ -492,14 +533,29 @@ export interface CashRegisterSession {
   cashReceivedMinor: number;
   cashRefundedMinor: number;
   cashExpensesMinor: number;
+  cashAdjustmentsMinor?: number;
   expectedClosingMinor: number;
   actualClosingMinor: number | null;
   discrepancyMinor: number | null;
+  openingNotes?: string | null;
   discrepancyNotes: string | null;
   openedByUserId: number;
   closedByUserId: number | null;
   openedAt: string;
   closedAt: string | null;
+}
+
+export interface CashRegisterMovement {
+  id: number;
+  sessionId: number;
+  movementType: CashMovementType;
+  amountMinor: number;
+  paymentId: number | null;
+  depositMovementId: number | null;
+  expenseId: number | null;
+  description: string | null;
+  recordedByUserId: number;
+  createdAt: string;
 }
 
 export interface Invoice {

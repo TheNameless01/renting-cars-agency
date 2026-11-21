@@ -3,21 +3,29 @@ import { PREVIEW_ENDPOINTS } from '../../shared/api/previewContracts.ts';
 import type {
   AuditLogEntry,
   AuthSession,
+  CashMovementType,
+  CashRegisterMovement,
+  CashRegisterSession,
   ContractPricingItem,
   ContractStatus,
   CurrencyCode,
   Customer,
+  CustomerAdjustmentType,
   CustomerCompany,
   CustomerDocument,
   CustomerRiskRecord,
+  DepositChargeCategory,
   DepositStatus,
+  ExpenseCategory,
   MileageMode,
+  PaymentDirection,
   PaymentMethod,
   PermissionCode,
   ReservationStatus,
   RiskLevel,
   RiskReason,
   RoleCode,
+  Supplier,
   Vehicle,
   VehicleDocType,
   VehicleDocument,
@@ -159,6 +167,8 @@ export interface CustomerProfileDto {
     totalChargedMinor: number;
     netPaidMinor: number;
     outstandingBalanceMinor: number;
+    overdueDebtMinor: number;
+    heldDepositsMinor: number;
   };
 }
 
@@ -350,13 +360,15 @@ export interface ContractDetailDto {
     id: number;
     transactionCode: string;
     receiptNumber: string;
-    direction: 'INFLOW' | 'REFUND';
+    direction: PaymentDirection;
     method: PaymentMethod;
     paymentReference: string | null;
     amountMinor: number;
     currency: CurrencyCode;
     paymentDate: string;
     description: string | null;
+    reversalOfPaymentId: number | null;
+    isReversed: boolean;
     createdAt: string;
   }>;
   deposit: {
@@ -368,9 +380,359 @@ export interface ContractDetailDto {
     returnedDate: string | null;
     deductedAmountMinor: number;
     refundedAmountMinor: number;
+    remainingHeldMinor: number;
     deductionReason: string | null;
+    hasSupportingDoc: boolean;
+    supportingDocOriginalName: string | null;
   } | null;
 }
+
+// Phase 3 Financial Management DTOs
+export interface PaymentItemDto {
+  id: number;
+  transactionCode: string;
+  receiptNumber: string;
+  contractId: number;
+  contractNumber: string;
+  customerId: number;
+  customerName: string;
+  vehicleLabel: string;
+  direction: PaymentDirection;
+  method: PaymentMethod;
+  paymentReference: string | null;
+  amountMinor: number;
+  currency: CurrencyCode;
+  paymentDate: string;
+  description: string | null;
+  recordedByUserId: number;
+  recordedByUsername: string;
+  reversalOfPaymentId: number | null;
+  reversedByPaymentId: number | null;
+  isReversed: boolean;
+  createdAt: string;
+}
+
+export interface PaymentReceiptDto {
+  payment: PaymentItemDto;
+  agency: {
+    name: string;
+    address: string;
+    phone: string;
+    nif: string;
+    rc: string;
+  };
+  contract: {
+    id: number;
+    contractNumber: string;
+    vehicleLabel: string;
+    startDate: string;
+    expectedReturnDate: string;
+    totalContractAmountMinor: number;
+    paidNetMinor: number;
+    outstandingMinor: number;
+  };
+  customer: {
+    id: number;
+    fullName: string;
+    phone: string;
+    address: string | null;
+  };
+  recordedByFullName: string;
+}
+
+export interface DepositListItemDto {
+  id: number;
+  contractId: number;
+  contractNumber: string;
+  contractStatus: string;
+  customerId: number;
+  customerName: string;
+  customerPhone: string;
+  vehicleId: number;
+  vehicleLabel: string;
+  amountMinor: number;
+  currency: CurrencyCode;
+  status: DepositStatus;
+  receivedDate: string;
+  returnedDate: string | null;
+  deductedAmountMinor: number;
+  refundedAmountMinor: number;
+  remainingHeldMinor: number;
+  deductionReason: string | null;
+  receivedMethod: PaymentMethod;
+  refundMethod: PaymentMethod | null;
+  hasSupportingDoc: boolean;
+  supportingDocOriginalName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TrafficFineDto {
+  id: number;
+  contractId: number | null;
+  contractNumber: string | null;
+  vehicleId: number;
+  vehicleLabel: string;
+  customerId: number;
+  customerName: string;
+  fineType: 'TRAFFIC' | 'RADAR' | 'PARKING' | 'OTHER';
+  referenceNumber: string | null;
+  incurredDate: string;
+  amountMinor: number;
+  isPaidByCustomer: boolean;
+  notes: string | null;
+  createdAt: string;
+}
+
+export interface DepositDetailDto {
+  deposit: DepositListItemDto;
+  contractCharges: {
+    damageChargeMinor: number;
+    lateFeeMinor: number;
+    extraKmChargeMinor: number;
+    otherChargesMinor: number;
+  };
+  movements: Array<{
+    id: number;
+    depositId: number;
+    movementType: 'RECEIVED' | 'DEDUCTED' | 'REFUNDED' | 'ADJUSTMENT';
+    amountMinor: number;
+    chargeCategory: DepositChargeCategory | null;
+    trafficFineId: number | null;
+    fineReference: string | null;
+    paymentMethod: PaymentMethod | null;
+    reason: string | null;
+    recordedByUserId: number;
+    recordedByUsername: string;
+    createdAt: string;
+  }>;
+  fines: TrafficFineDto[];
+}
+
+export interface CashSessionSummaryDto extends CashRegisterSession {
+  openedByUsername?: string;
+  closedByUsername?: string | null;
+}
+
+export interface CashMovementDto extends CashRegisterMovement {
+  recordedByUsername?: string;
+  referenceCode?: string | null;
+}
+
+export interface CashSessionDetailDto {
+  session: CashSessionSummaryDto;
+  movements: CashMovementDto[];
+}
+
+export interface CashCurrentResponseDto {
+  session: CashSessionSummaryDto | null;
+  movements: CashMovementDto[];
+  suggestedOpeningBalanceMinor: number;
+  lastClosedDate: string | null;
+}
+
+export interface CustomerAccountDto {
+  customerId: number;
+  customerType: 'INDIVIDUAL' | 'COMPANY';
+  fullName: string;
+  companyName: string | null;
+  phone: string;
+  riskStatus: RiskLevel;
+  totalRentals: number;
+  activeContractsCount: number;
+  overdueContractsCount: number;
+  contractChargesMinor: number;
+  debitAdjustmentsMinor: number;
+  creditAndWriteOffMinor: number;
+  totalChargedMinor: number;
+  inflowsMinor: number;
+  refundsMinor: number;
+  netPaidMinor: number;
+  outstandingBalanceMinor: number;
+  overdueDebtMinor: number;
+  heldDepositsMinor: number;
+}
+
+export interface CustomerLedgerDto {
+  customer: {
+    id: number;
+    customerType: 'INDIVIDUAL' | 'COMPANY';
+    fullName: string;
+    companyName: string | null;
+    phone: string;
+    riskStatus: RiskLevel;
+  };
+  metrics: Omit<
+    CustomerAccountDto,
+    'customerId' | 'customerType' | 'fullName' | 'companyName' | 'phone' | 'riskStatus'
+  >;
+  contracts: Array<{
+    id: number;
+    contractNumber: string;
+    vehicleLabel: string;
+    status: ContractStatus;
+    startDate: string;
+    expectedReturnDate: string;
+    currency: CurrencyCode;
+    totalContractAmountMinor: number;
+    adjustmentNetMinor: number;
+    paidNetMinor: number;
+    outstandingMinor: number;
+    isOverdue: boolean;
+  }>;
+  payments: Array<{
+    id: number;
+    transactionCode: string;
+    receiptNumber: string;
+    contractId: number;
+    contractNumber: string;
+    direction: PaymentDirection;
+    method: PaymentMethod;
+    paymentReference: string | null;
+    amountMinor: number;
+    currency: CurrencyCode;
+    paymentDate: string;
+    description: string | null;
+    recordedByUsername: string;
+  }>;
+  adjustments: Array<{
+    id: number;
+    adjustmentCode: string;
+    customerId: number;
+    contractId: number | null;
+    contractNumber: string | null;
+    adjustmentType: CustomerAdjustmentType;
+    amountMinor: number;
+    currency: CurrencyCode;
+    adjustmentDate: string;
+    reason: string;
+    notes: string | null;
+    authorizedByUsername: string;
+    createdAt: string;
+  }>;
+  deposits: Array<{
+    id: number;
+    contractId: number;
+    contractNumber: string;
+    amountMinor: number;
+    deductedAmountMinor: number;
+    refundedAmountMinor: number;
+    remainingHeldMinor: number;
+    currency: CurrencyCode;
+    status: DepositStatus;
+    receivedDate: string;
+  }>;
+}
+
+export interface ExpenseItemDto {
+  id: number;
+  expenseNumber: string;
+  category: ExpenseCategory;
+  vehicleId: number | null;
+  vehicleLabel: string | null;
+  supplierId: number | null;
+  supplierName: string | null;
+  maintenanceRecordId: number | null;
+  amountMinor: number;
+  currency: CurrencyCode;
+  expenseDate: string;
+  paymentMethod: PaymentMethod;
+  paymentReference: string | null;
+  status: 'POSTED' | 'REVERSED';
+  description: string;
+  hasReceiptDoc: boolean;
+  receiptOriginalName: string | null;
+  reversalReason: string | null;
+  reversedAt: string | null;
+  reversedByUsername: string | null;
+  recordedByUserId: number;
+  recordedByUsername: string;
+  createdAt: string;
+}
+
+export interface VehicleProfitabilityItemDto {
+  vehicleId: number;
+  internalCode: string;
+  matricule: string;
+  brand: string;
+  model: string;
+  category: string;
+  contractCount: number;
+  rentedDays: number;
+  rentalRevenueMinor: number;
+  collectedMinor: number;
+  expensesMinor: number;
+  netProfitMinor: number;
+  acquisitionCostMinor: number | null;
+  roiPercent: number | null;
+}
+
+export interface VehicleFinanceSummaryDto {
+  vehicleId: number;
+  expenses: ExpenseItemDto[];
+  profitability: VehicleProfitabilityItemDto;
+  totalFinesMinor: number;
+  unpaidFinesMinor: number;
+}
+
+export interface FinancialDashboardReportDto {
+  dateFrom: string;
+  dateTo: string;
+  currency: CurrencyCode;
+  summary: {
+    contractCount: number;
+    rentalRevenueMinor: number;
+    collectedNetMinor: number;
+    paymentInflowsMinor: number;
+    paymentRefundsMinor: number;
+    expensesMinor: number;
+    vehicleExpensesMinor: number;
+    agencyExpensesMinor: number;
+    netOperatingIncomeMinor: number;
+    portfolioBilledMinor: number;
+    portfolioCollectedNetMinor: number;
+    portfolioOutstandingMinor: number;
+    portfolioOverdueMinor: number;
+    depositsCurrentlyHeldDzdMinor: number;
+    depositsCurrentlyHeldEurMinor: number;
+    depositsHeldCount: number;
+    periodDepositsReceivedMinor: number;
+    periodDepositsDeductedMinor: number;
+    periodDepositsRefundedMinor: number;
+    totalRefundsMinor: number;
+    openCashSessionBalanceMinor: number | null;
+    openCashSessionDate: string | null;
+    lastClosedCashBalanceMinor: number;
+    agencyOperatingCashNetMinor: number;
+  };
+  collectedByMethod: Record<PaymentMethod, number>;
+  expensesByCategory: Array<{
+    category: ExpenseCategory;
+    vehicleMinor: number;
+    agencyMinor: number;
+    totalMinor: number;
+  }>;
+  dailyRevenue: Array<{
+    date: string;
+    contractRevenueMinor: number;
+    adjustmentsNetMinor: number;
+    totalRevenueMinor: number;
+    collectedMinor: number;
+    expensesMinor: number;
+  }>;
+  monthlyRevenue: Array<{
+    month: string;
+    contractRevenueMinor: number;
+    adjustmentsNetMinor: number;
+    totalRevenueMinor: number;
+    collectedMinor: number;
+    expensesMinor: number;
+  }>;
+  vehicleProfitability: VehicleProfitabilityItemDto[];
+}
+
+export type SupplierDto = Supplier;
+export type CashMovementKind = CashMovementType;
 
 /**
  * In-memory auth token only (never written to localStorage or sessionStorage).
@@ -1055,5 +1417,371 @@ export const erpClient = {
       'POST',
       `${PREVIEW_ENDPOINTS.CONTRACTS}/${contractId}/cancel`,
       { contractId, reason }
+    ),
+
+  // Phase 3: Financial Management
+  listPayments: (filters?: {
+    contractId?: number;
+    customerId?: number;
+    method?: string;
+    direction?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    search?: string;
+  }) =>
+    callBackend<PaymentItemDto[]>(
+      IPC_CHANNELS.FINANCE_LIST_PAYMENTS,
+      'GET',
+      `${PREVIEW_ENDPOINTS.FINANCE}/payments${buildQuery({
+        contractId: filters?.contractId ? String(filters.contractId) : undefined,
+        customerId: filters?.customerId ? String(filters.customerId) : undefined,
+        method: filters?.method,
+        direction: filters?.direction,
+        dateFrom: filters?.dateFrom,
+        dateTo: filters?.dateTo,
+        search: filters?.search,
+      })}`,
+      filters
+    ),
+
+  recordPayment: (payload: {
+    contractId: number;
+    direction: PaymentDirection;
+    method: PaymentMethod;
+    paymentReference?: string | null;
+    amountMinor: number;
+    currency: CurrencyCode;
+    paymentDate: string;
+    description?: string | null;
+  }) =>
+    callBackend<PaymentReceiptDto>(
+      IPC_CHANNELS.FINANCE_RECORD_PAYMENT,
+      'POST',
+      `${PREVIEW_ENDPOINTS.FINANCE}/payments`,
+      payload
+    ),
+
+  reversePayment: (paymentId: number, reason: string) =>
+    callBackend<PaymentReceiptDto>(
+      IPC_CHANNELS.FINANCE_REVERSE_PAYMENT,
+      'POST',
+      `${PREVIEW_ENDPOINTS.FINANCE}/payments/${paymentId}/reverse`,
+      { paymentId, reason }
+    ),
+
+  getPaymentReceipt: (paymentId: number) =>
+    callBackend<PaymentReceiptDto>(
+      IPC_CHANNELS.FINANCE_GET_PAYMENT_RECEIPT,
+      'GET',
+      `${PREVIEW_ENDPOINTS.FINANCE}/payments/${paymentId}/receipt`,
+      { paymentId }
+    ),
+
+  listDeposits: (filters?: { status?: string; customerId?: number; search?: string }) =>
+    callBackend<DepositListItemDto[]>(
+      IPC_CHANNELS.FINANCE_LIST_DEPOSITS,
+      'GET',
+      `${PREVIEW_ENDPOINTS.FINANCE}/deposits${buildQuery({
+        status: filters?.status,
+        customerId: filters?.customerId ? String(filters.customerId) : undefined,
+        search: filters?.search,
+      })}`,
+      filters
+    ),
+
+  getDepositDetail: (depositId: number) =>
+    callBackend<DepositDetailDto>(
+      IPC_CHANNELS.FINANCE_GET_DEPOSIT_DETAIL,
+      'GET',
+      `${PREVIEW_ENDPOINTS.FINANCE}/deposits/${depositId}`,
+      { depositId }
+    ),
+
+  settleDeposit: (payload: {
+    depositId: number;
+    deductedAmountMinor: number;
+    refundedAmountMinor: number;
+    chargeCategory?: DepositChargeCategory | null;
+    deductionReason?: string | null;
+    refundMethod?: PaymentMethod;
+    trafficFineId?: number | null;
+    supportingDoc?: {
+      originalFileName: string;
+      mimeType: 'image/jpeg' | 'image/png' | 'image/webp' | 'application/pdf';
+      base64Data: string;
+    } | null;
+  }) =>
+    callBackend<DepositDetailDto>(
+      IPC_CHANNELS.FINANCE_SETTLE_DEPOSIT,
+      'POST',
+      `${PREVIEW_ENDPOINTS.FINANCE}/deposits/${payload.depositId}/settle`,
+      payload
+    ),
+
+  readDepositDoc: (depositId: number) =>
+    callBackend<{ id: number; originalFileName: string; mimeType: string; base64Data: string }>(
+      IPC_CHANNELS.FINANCE_READ_DEPOSIT_DOC,
+      'GET',
+      `${PREVIEW_ENDPOINTS.FINANCE}/deposits/${depositId}/document`,
+      { depositId }
+    ),
+
+  listTrafficFines: (filters?: { contractId?: number; customerId?: number }) =>
+    callBackend<TrafficFineDto[]>(
+      IPC_CHANNELS.FINANCE_LIST_FINES,
+      'GET',
+      `${PREVIEW_ENDPOINTS.FINANCE}/fines${buildQuery({
+        contractId: filters?.contractId ? String(filters.contractId) : undefined,
+        customerId: filters?.customerId ? String(filters.customerId) : undefined,
+      })}`,
+      filters
+    ),
+
+  createTrafficFine: (payload: {
+    contractId?: number | null;
+    vehicleId: number;
+    customerId: number;
+    fineType: 'TRAFFIC' | 'RADAR' | 'PARKING' | 'OTHER';
+    referenceNumber?: string | null;
+    incurredDate: string;
+    amountMinor: number;
+    notes?: string | null;
+  }) =>
+    callBackend<TrafficFineDto>(
+      IPC_CHANNELS.FINANCE_CREATE_FINE,
+      'POST',
+      `${PREVIEW_ENDPOINTS.FINANCE}/fines`,
+      payload
+    ),
+
+  listCustomerAccounts: (filters?: { search?: string; onlyWithBalance?: boolean; onlyOverdue?: boolean }) =>
+    callBackend<CustomerAccountDto[]>(
+      IPC_CHANNELS.FINANCE_CUSTOMER_ACCOUNTS,
+      'GET',
+      `${PREVIEW_ENDPOINTS.FINANCE}/customers/accounts${buildQuery({
+        search: filters?.search,
+        onlyWithBalance: filters?.onlyWithBalance,
+        onlyOverdue: filters?.onlyOverdue,
+      })}`,
+      filters
+    ),
+
+  getCustomerFinancialLedger: (customerId: number) =>
+    callBackend<CustomerLedgerDto>(
+      IPC_CHANNELS.FINANCE_CUSTOMER_LEDGER,
+      'GET',
+      `${PREVIEW_ENDPOINTS.FINANCE}/customers/${customerId}/ledger`,
+      { customerId }
+    ),
+
+  createCustomerAdjustment: (payload: {
+    customerId: number;
+    contractId?: number | null;
+    adjustmentType: CustomerAdjustmentType;
+    amountMinor: number;
+    currency: CurrencyCode;
+    adjustmentDate: string;
+    reason: string;
+    notes?: string | null;
+  }) =>
+    callBackend<CustomerLedgerDto>(
+      IPC_CHANNELS.FINANCE_CREATE_CUSTOMER_ADJUSTMENT,
+      'POST',
+      `${PREVIEW_ENDPOINTS.FINANCE}/customers/${payload.customerId}/adjustments`,
+      payload
+    ),
+
+  listSuppliers: () =>
+    callBackend<SupplierDto[]>(
+      IPC_CHANNELS.FINANCE_LIST_SUPPLIERS,
+      'GET',
+      `${PREVIEW_ENDPOINTS.FINANCE}/suppliers`
+    ),
+
+  createSupplier: (payload: {
+    name: string;
+    phone?: string | null;
+    address?: string | null;
+    specialty?: string | null;
+    nifNumber?: string | null;
+    notes?: string | null;
+  }) =>
+    callBackend<SupplierDto>(
+      IPC_CHANNELS.FINANCE_CREATE_SUPPLIER,
+      'POST',
+      `${PREVIEW_ENDPOINTS.FINANCE}/suppliers`,
+      payload
+    ),
+
+  listExpenses: (filters?: {
+    category?: string;
+    vehicleId?: number;
+    supplierId?: number;
+    status?: string;
+    scope?: 'ALL' | 'VEHICLE' | 'AGENCY';
+    dateFrom?: string;
+    dateTo?: string;
+    search?: string;
+  }) =>
+    callBackend<ExpenseItemDto[]>(
+      IPC_CHANNELS.FINANCE_LIST_EXPENSES,
+      'GET',
+      `${PREVIEW_ENDPOINTS.FINANCE}/expenses${buildQuery({
+        category: filters?.category,
+        vehicleId: filters?.vehicleId ? String(filters.vehicleId) : undefined,
+        supplierId: filters?.supplierId ? String(filters.supplierId) : undefined,
+        status: filters?.status,
+        scope: filters?.scope,
+        dateFrom: filters?.dateFrom,
+        dateTo: filters?.dateTo,
+        search: filters?.search,
+      })}`,
+      filters
+    ),
+
+  recordExpense: (payload: {
+    category: ExpenseCategory;
+    vehicleId?: number | null;
+    supplierId?: number | null;
+    maintenanceRecordId?: number | null;
+    amountMinor: number;
+    currency: CurrencyCode;
+    expenseDate: string;
+    paymentMethod: PaymentMethod;
+    paymentReference?: string | null;
+    description: string;
+    receiptDoc?: {
+      originalFileName: string;
+      mimeType: 'image/jpeg' | 'image/png' | 'image/webp' | 'application/pdf';
+      base64Data: string;
+    } | null;
+  }) =>
+    callBackend<ExpenseItemDto>(
+      IPC_CHANNELS.FINANCE_RECORD_EXPENSE,
+      'POST',
+      `${PREVIEW_ENDPOINTS.FINANCE}/expenses`,
+      payload
+    ),
+
+  reverseExpense: (expenseId: number, reason: string) =>
+    callBackend<ExpenseItemDto>(
+      IPC_CHANNELS.FINANCE_REVERSE_EXPENSE,
+      'POST',
+      `${PREVIEW_ENDPOINTS.FINANCE}/expenses/${expenseId}/reverse`,
+      { expenseId, reason }
+    ),
+
+  readExpenseDoc: (expenseId: number) =>
+    callBackend<{ id: number; originalFileName: string; mimeType: string; base64Data: string }>(
+      IPC_CHANNELS.FINANCE_READ_EXPENSE_DOC,
+      'GET',
+      `${PREVIEW_ENDPOINTS.FINANCE}/expenses/${expenseId}/document`,
+      { expenseId }
+    ),
+
+  getCurrentCashSession: () =>
+    callBackend<CashCurrentResponseDto>(
+      IPC_CHANNELS.FINANCE_CASH_SESSION_CURRENT,
+      'GET',
+      `${PREVIEW_ENDPOINTS.FINANCE}/cash-register/current`
+    ),
+
+  listCashSessions: (limit = 90) =>
+    callBackend<CashSessionSummaryDto[]>(
+      IPC_CHANNELS.FINANCE_CASH_SESSION_LIST,
+      'GET',
+      `${PREVIEW_ENDPOINTS.FINANCE}/cash-register/sessions?limit=${limit}`,
+      { limit }
+    ),
+
+  getCashSessionDetail: (sessionId: number) =>
+    callBackend<CashSessionDetailDto>(
+      IPC_CHANNELS.FINANCE_CASH_SESSION_DETAIL,
+      'GET',
+      `${PREVIEW_ENDPOINTS.FINANCE}/cash-register/sessions/${sessionId}`,
+      { sessionId }
+    ),
+
+  openCashSession: (payload: {
+    sessionDate?: string;
+    openingBalanceMinor: number;
+    openingNotes?: string | null;
+  }) =>
+    callBackend<CashSessionDetailDto>(
+      IPC_CHANNELS.FINANCE_CASH_SESSION_OPEN,
+      'POST',
+      `${PREVIEW_ENDPOINTS.FINANCE}/cash-register/open`,
+      payload
+    ),
+
+  closeCashSession: (payload: {
+    sessionId: number;
+    actualClosingMinor: number;
+    discrepancyNotes?: string | null;
+  }) =>
+    callBackend<CashSessionDetailDto>(
+      IPC_CHANNELS.FINANCE_CASH_SESSION_CLOSE,
+      'POST',
+      `${PREVIEW_ENDPOINTS.FINANCE}/cash-register/sessions/${payload.sessionId}/close`,
+      payload
+    ),
+
+  recordCashAdjustment: (payload: {
+    sessionId: number;
+    amountDeltaMinor: number;
+    reason: string;
+  }) =>
+    callBackend<CashSessionDetailDto>(
+      IPC_CHANNELS.FINANCE_CASH_RECORD_ADJUSTMENT,
+      'POST',
+      `${PREVIEW_ENDPOINTS.FINANCE}/cash-register/sessions/${payload.sessionId}/adjustment`,
+      payload
+    ),
+
+  getFinancialDashboardReports: (params?: { dateFrom?: string; dateTo?: string }) =>
+    callBackend<FinancialDashboardReportDto>(
+      IPC_CHANNELS.FINANCE_DASHBOARD_REPORTS,
+      'GET',
+      `${PREVIEW_ENDPOINTS.REPORTS}/dashboard${buildQuery({
+        dateFrom: params?.dateFrom,
+        dateTo: params?.dateTo,
+      })}`,
+      params
+    ),
+
+  getVehicleProfitabilityReport: (params?: {
+    dateFrom?: string;
+    dateTo?: string;
+    includeArchived?: boolean;
+  }) =>
+    callBackend<VehicleProfitabilityItemDto[]>(
+      IPC_CHANNELS.FINANCE_VEHICLE_PROFITABILITY,
+      'GET',
+      `${PREVIEW_ENDPOINTS.REPORTS}/vehicle-profitability${buildQuery({
+        dateFrom: params?.dateFrom,
+        dateTo: params?.dateTo,
+        includeArchived: params?.includeArchived,
+      })}`,
+      params
+    ),
+
+  getVehicleFinanceSummary: (vehicleId: number) =>
+    callBackend<VehicleFinanceSummaryDto>(
+      IPC_CHANNELS.FINANCE_VEHICLE_SUMMARY,
+      'GET',
+      `${PREVIEW_ENDPOINTS.FINANCE}/vehicles/${vehicleId}/summary`,
+      { vehicleId }
+    ),
+
+  exportFinancialCsv: (params?: { dateFrom?: string; dateTo?: string; lang?: 'fr' | 'ar' }) =>
+    callBackend<{ fileName: string; csvContent: string }>(
+      IPC_CHANNELS.FINANCE_EXPORT_CSV,
+      'GET',
+      `${PREVIEW_ENDPOINTS.REPORTS}/export-csv${buildQuery({
+        dateFrom: params?.dateFrom,
+        dateTo: params?.dateTo,
+        lang: params?.lang,
+      })}`,
+      params
     ),
 };

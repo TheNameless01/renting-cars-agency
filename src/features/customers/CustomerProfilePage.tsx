@@ -1,6 +1,7 @@
 import {
   Archive,
   ArrowLeft,
+  BookOpen,
   Building2,
   Download,
   Eye,
@@ -28,6 +29,7 @@ import { useAuth } from '../../hooks/useAuth.tsx';
 import { useI18n } from '../../hooks/useI18n.tsx';
 import { erpClient, type CustomerProfileDto, type WilayaDto } from '../../lib/apiClient.ts';
 import { formatCurrencyMinor, formatDateTimeAlgiers, formatDigits } from '../../lib/formatters.ts';
+import { CustomerLedgerModal } from '../finance/CustomerLedgerModal.tsx';
 
 type CustomerTab = 'overview' | 'documents' | 'risk' | 'rates' | 'rentals';
 
@@ -110,6 +112,9 @@ export function CustomerProfilePage() {
   const canWrite = hasPermission('customers:write');
   const canOverrideBlacklist = hasPermission('customers:override_blacklist');
   const canManageSettings = hasPermission('settings:manage');
+  const canViewFinanceLedger =
+    hasPermission('finance:read') || hasPermission('finance:approve_adjustment');
+  const [showLedgerModal, setShowLedgerModal] = useState(false);
 
   const syncEditFields = useCallback((prof: CustomerProfileDto) => {
     setEditType(prof.customer.customerType);
@@ -411,30 +416,42 @@ export function CustomerProfilePage() {
             </p>
           </div>
         </div>
-        {canWrite && !customer.isArchived && (
-          <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
+          {canViewFinanceLedger && (
             <button
               type="button"
-              onClick={openEditModal}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800"
+              onClick={() => setShowLedgerModal(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-blue-300 dark:border-blue-800 text-blue-800 dark:text-blue-300 text-xs font-medium hover:bg-blue-50 dark:hover:bg-blue-950/30"
             >
-              <Pencil className="w-3.5 h-3.5" />
-              <span>{t.customers.editCustomer}</span>
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>{t.finance.accounts.openLedger}</span>
             </button>
-            <button
-              type="button"
-              onClick={() => setConfirmArchive(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-400 text-xs font-medium hover:bg-rose-50 dark:hover:bg-rose-950/30"
-            >
-              <Archive className="w-3.5 h-3.5" />
-              <span>{t.customers.archiveCustomer}</span>
-            </button>
-          </div>
-        )}
+          )}
+          {canWrite && !customer.isArchived && (
+            <>
+              <button
+                type="button"
+                onClick={openEditModal}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+                <span>{t.customers.editCustomer}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmArchive(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-400 text-xs font-medium hover:bg-rose-50 dark:hover:bg-rose-950/30"
+              >
+                <Archive className="w-3.5 h-3.5" />
+                <span>{t.customers.archiveCustomer}</span>
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* KPI Strip */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
           <div className="text-xs text-slate-500">{t.customers.totalRentals}</div>
           <div className="text-xl font-semibold font-mono-tabular mt-1">
@@ -443,20 +460,32 @@ export function CustomerProfilePage() {
         </div>
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
           <div className="text-xs text-slate-500">{t.customers.totalCharged}</div>
-          <div className="text-xl font-semibold font-mono-tabular mt-1">
+          <div className="text-lg font-semibold font-mono-tabular mt-1">
             {formatCurrencyMinor(stats.totalChargedMinor, 'DZD', lang, numerals)}
           </div>
         </div>
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
           <div className="text-xs text-slate-500">{t.customers.totalPaid}</div>
-          <div className="text-xl font-semibold font-mono-tabular text-emerald-700 dark:text-emerald-400 mt-1">
+          <div className="text-lg font-semibold font-mono-tabular text-emerald-700 dark:text-emerald-400 mt-1">
             {formatCurrencyMinor(stats.netPaidMinor, 'DZD', lang, numerals)}
           </div>
         </div>
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
           <div className="text-xs text-slate-500">{t.customers.outstanding}</div>
-          <div className="text-xl font-semibold font-mono-tabular text-amber-700 dark:text-amber-400 mt-1">
+          <div className="text-lg font-semibold font-mono-tabular text-amber-700 dark:text-amber-400 mt-1">
             {formatCurrencyMinor(stats.outstandingBalanceMinor, 'DZD', lang, numerals)}
+          </div>
+        </div>
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+          <div className="text-xs text-slate-500">{t.finance.accounts.overdueDebt}</div>
+          <div className="text-lg font-semibold font-mono-tabular text-rose-700 dark:text-rose-400 mt-1">
+            {formatCurrencyMinor(stats.overdueDebtMinor, 'DZD', lang, numerals)}
+          </div>
+        </div>
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+          <div className="text-xs text-slate-500">{t.finance.accounts.heldDepositsLiability}</div>
+          <div className="text-lg font-semibold font-mono-tabular mt-1">
+            {formatCurrencyMinor(stats.heldDepositsMinor, 'DZD', lang, numerals)}
           </div>
         </div>
       </div>
@@ -1386,6 +1415,12 @@ export function CustomerProfilePage() {
         title={t.dialogs.archiveCustomerTitle}
         description={t.dialogs.archiveCustomerDesc}
         confirmLabel={t.customers.archiveCustomer}
+      />
+
+      <CustomerLedgerModal
+        customerId={showLedgerModal ? customer.id : null}
+        onClose={() => setShowLedgerModal(false)}
+        onUpdated={loadData}
       />
     </div>
   );

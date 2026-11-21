@@ -14,6 +14,7 @@ import type {
 import { decryptBuffer, encryptBuffer, resolveConfinedPath } from '../../security/crypto.ts';
 import { AuthError } from '../../security/rbac.ts';
 import { writeAuditLog } from './auditService.ts';
+import { computeCustomerFinancialMetrics } from './customerFinanceService.ts';
 
 function mapCustomer(row: any): Customer {
   return {
@@ -171,21 +172,7 @@ export function getCustomerProfile(db: Database.Database, customerId: number) {
       currency: c.currency,
     }));
 
-  const paymentSummary = db
-    .prepare<[number], { inflows: number; refunds: number }>(
-      `SELECT
-         COALESCE(SUM(CASE WHEN direction = 'INFLOW' THEN amount_minor ELSE 0 END), 0) AS inflows,
-         COALESCE(SUM(CASE WHEN direction = 'REFUND' THEN amount_minor ELSE 0 END), 0) AS refunds
-       FROM contract_payments
-       WHERE customer_id = ?`
-    )
-    .get(customerId);
-
-  const totalChargedMinor = rentalHistory
-    .filter((r) => r.status !== 'CANCELLED')
-    .reduce((sum, r) => sum + Number(r.totalContractAmountMinor || 0), 0);
-  const netPaidMinor = (paymentSummary?.inflows ?? 0) - (paymentSummary?.refunds ?? 0);
-  const outstandingBalanceMinor = Math.max(0, totalChargedMinor - netPaidMinor);
+  const finMetrics = computeCustomerFinancialMetrics(db, customerId);
 
   const customRates = db
     .prepare<[number], any>('SELECT * FROM customer_custom_rates WHERE customer_id = ? AND is_active = 1')
@@ -210,10 +197,12 @@ export function getCustomerProfile(db: Database.Database, customerId: number) {
     rentalHistory,
     customRates,
     stats: {
-      totalRentals: rentalHistory.length,
-      totalChargedMinor,
-      netPaidMinor,
-      outstandingBalanceMinor,
+      totalRentals: finMetrics.totalRentals,
+      totalChargedMinor: finMetrics.totalChargedMinor,
+      netPaidMinor: finMetrics.netPaidMinor,
+      outstandingBalanceMinor: finMetrics.outstandingBalanceMinor,
+      overdueDebtMinor: finMetrics.overdueDebtMinor,
+      heldDepositsMinor: finMetrics.heldDepositsMinor,
     },
   };
 }

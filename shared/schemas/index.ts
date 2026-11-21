@@ -185,18 +185,86 @@ export const RecordPaymentSchema = z.object({
   contractId: z.number().int().positive(),
   direction: z.enum(['INFLOW', 'REFUND']),
   method: z.enum(['CASH', 'CCP', 'BARIDIMOB', 'BANK_TRANSFER', 'OTHER']),
-  paymentReference: z.string().max(128).nullable().optional(),
+  paymentReference: z.string().trim().max(128).nullable().optional(),
   amountMinor: z.number().int().positive(),
   currency: z.enum(['DZD', 'EUR']).default('DZD'),
   paymentDate: z.string().min(8),
-  description: z.string().max(500).nullable().optional(),
+  description: z.string().trim().max(500).nullable().optional(),
+});
+
+export const ReversePaymentSchema = z.object({
+  paymentId: z.number().int().positive(),
+  reason: z.string().trim().min(3).max(500),
 });
 
 export const SettleDepositSchema = z.object({
   depositId: z.number().int().positive(),
   deductedAmountMinor: z.number().int().min(0),
   refundedAmountMinor: z.number().int().min(0),
-  deductionReason: z.string().max(500).nullable().optional(),
+  chargeCategory: z
+    .enum(['DAMAGE', 'TRAFFIC_FINE', 'LATE_FEE', 'EXTRA_KM', 'CLEANING', 'FUEL', 'OTHER'])
+    .nullable()
+    .optional(),
+  deductionReason: z.string().trim().max(500).nullable().optional(),
+  refundMethod: z.enum(['CASH', 'CCP', 'BARIDIMOB', 'BANK_TRANSFER', 'OTHER']).default('CASH'),
+  trafficFineId: z.number().int().positive().nullable().optional(),
+  supportingDoc: z
+    .object({
+      originalFileName: z.string().trim().min(1).max(200),
+      mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']),
+      base64Data: z.string().min(4).max(8_000_000),
+    })
+    .nullable()
+    .optional(),
+});
+
+export const CreateTrafficFineSchema = z.object({
+  contractId: z.number().int().positive().nullable().optional(),
+  vehicleId: z.number().int().positive(),
+  customerId: z.number().int().positive(),
+  fineType: z.enum(['TRAFFIC', 'RADAR', 'PARKING', 'OTHER']),
+  referenceNumber: z.string().trim().max(100).nullable().optional(),
+  incurredDate: z.string().min(8),
+  amountMinor: z.number().int().positive(),
+  notes: z.string().trim().max(500).nullable().optional(),
+});
+
+export const OpenCashSessionSchema = z.object({
+  sessionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  openingBalanceMinor: z.number().int().min(0),
+  openingNotes: z.string().trim().max(500).nullable().optional(),
+});
+
+export const CloseCashSessionSchema = z.object({
+  sessionId: z.number().int().positive(),
+  actualClosingMinor: z.number().int().min(0),
+  discrepancyNotes: z.string().trim().max(500).nullable().optional(),
+});
+
+export const RecordCashAdjustmentSchema = z.object({
+  sessionId: z.number().int().positive(),
+  amountDeltaMinor: z.number().int().refine((n) => n !== 0, 'Le montant ne peut pas être zéro'),
+  reason: z.string().trim().min(3).max(500),
+});
+
+export const CreateCustomerAdjustmentSchema = z.object({
+  customerId: z.number().int().positive(),
+  contractId: z.number().int().positive().nullable().optional(),
+  adjustmentType: z.enum(['CREDIT_NOTE', 'DEBIT_CHARGE', 'WRITE_OFF']),
+  amountMinor: z.number().int().positive(),
+  currency: z.enum(['DZD', 'EUR']).default('DZD'),
+  adjustmentDate: z.string().min(8),
+  reason: z.string().trim().min(3).max(500),
+  notes: z.string().trim().max(1000).nullable().optional(),
+});
+
+export const CreateSupplierSchema = z.object({
+  name: z.string().trim().min(2).max(160),
+  phone: z.string().trim().max(40).nullable().optional(),
+  address: z.string().trim().max(255).nullable().optional(),
+  specialty: z.string().trim().max(120).nullable().optional(),
+  nifNumber: z.string().trim().max(64).nullable().optional(),
+  notes: z.string().trim().max(500).nullable().optional(),
 });
 
 export const CreateExpenseSchema = z.object({
@@ -218,7 +286,21 @@ export const CreateExpenseSchema = z.object({
   currency: z.enum(['DZD', 'EUR']).default('DZD'),
   expenseDate: z.string().min(8),
   paymentMethod: z.enum(['CASH', 'CCP', 'BARIDIMOB', 'BANK_TRANSFER', 'OTHER']).default('CASH'),
+  paymentReference: z.string().trim().max(128).nullable().optional(),
   description: z.string().trim().min(2).max(500),
+  receiptDoc: z
+    .object({
+      originalFileName: z.string().trim().min(1).max(200),
+      mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']),
+      base64Data: z.string().min(4).max(8_000_000),
+    })
+    .nullable()
+    .optional(),
+});
+
+export const ReverseExpenseSchema = z.object({
+  expenseId: z.number().int().positive(),
+  reason: z.string().trim().min(3).max(500),
 });
 
 export const InventoryMovementSchema = z.object({

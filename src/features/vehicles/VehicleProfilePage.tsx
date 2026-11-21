@@ -24,8 +24,9 @@ import { ModalDialog } from '../../components/ModalDialog.tsx';
 import { useToast } from '../../components/Toast.tsx';
 import { useAuth } from '../../hooks/useAuth.tsx';
 import { useI18n } from '../../hooks/useI18n.tsx';
-import { erpClient, type VehicleProfileDto } from '../../lib/apiClient.ts';
+import { erpClient, type VehicleFinanceSummaryDto, type VehicleProfileDto } from '../../lib/apiClient.ts';
 import { formatCurrencyMinor, formatDateTimeAlgiers, formatDigits } from '../../lib/formatters.ts';
+import { ExpensesTab } from '../finance/ExpensesTab.tsx';
 
 type VehicleTab =
   | 'general'
@@ -55,8 +56,14 @@ export function VehicleProfilePage() {
   const { showError, showSuccess } = useToast();
 
   const [profile, setProfile] = useState<VehicleProfileDto | null>(null);
+  const [financeSummary, setFinanceSummary] = useState<VehicleFinanceSummaryDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<VehicleTab>('general');
+  // ...
+  const canViewVehicleFinance =
+    hasPermission('finance:read') ||
+    hasPermission('finance:manage_expenses') ||
+    hasPermission('reports:view');
 
   // Edit vehicle modal
   const [showEditModal, setShowEditModal] = useState(false);
@@ -140,12 +147,22 @@ export function VehicleProfilePage() {
       const data = await erpClient.getVehicleProfile(Number(id));
       setProfile(data);
       syncEditFields(data);
+      if (canViewVehicleFinance) {
+        try {
+          const fin = await erpClient.getVehicleFinanceSummary(Number(id));
+          setFinanceSummary(fin);
+        } catch {
+          setFinanceSummary(null);
+        }
+      } else {
+        setFinanceSummary(null);
+      }
     } catch (err) {
       showError(err instanceof Error ? err.message : t.common.error);
     } finally {
       setLoading(false);
     }
-  }, [id, showError, syncEditFields, t.common.error]);
+  }, [canViewVehicleFinance, id, showError, syncEditFields, t.common.error]);
 
   useEffect(() => {
     void loadProfile();
@@ -677,10 +694,102 @@ export function VehicleProfilePage() {
         </div>
       )}
 
-      {(activeTab === 'maintenance' ||
-        activeTab === 'expenses' ||
-        activeTab === 'photos' ||
-        activeTab === 'profitability') && (
+      {activeTab === 'expenses' && (
+        canViewVehicleFinance ? (
+          <ExpensesTab defaultVehicleId={vehicle.id} />
+        ) : (
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-8 text-center">
+            <Lock className="w-6 h-6 mx-auto mb-2 text-slate-400" />
+            <p className="text-sm text-slate-600 dark:text-slate-400">
+              {t.finance.reports.noExpensePermissionNotice}
+            </p>
+          </div>
+        )
+      )}
+
+      {activeTab === 'profitability' && (
+        !canViewVehicleFinance ? (
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-8 text-center">
+            <Lock className="w-6 h-6 mx-auto mb-2 text-slate-400" />
+            <p className="text-sm text-slate-600 dark:text-slate-400">
+              {t.finance.reports.noExpensePermissionNotice}
+            </p>
+          </div>
+        ) : financeSummary ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+                <div className="text-xs text-slate-500">{t.finance.reports.vehicleRevenue}</div>
+                <div className="font-mono-tabular text-lg font-bold mt-1 text-slate-900 dark:text-slate-100">
+                  {formatCurrencyMinor(financeSummary.profitability.rentalRevenueMinor, 'DZD', lang, numerals)}
+                </div>
+                <div className="text-[11px] text-slate-500 mt-1 font-mono-tabular">
+                  {formatDigits(financeSummary.profitability.contractCount, numerals)} ·{' '}
+                  {formatDigits(financeSummary.profitability.rentedDays, numerals)} {t.common.days}
+                </div>
+              </div>
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+                <div className="text-xs text-slate-500">{t.finance.reports.netCollected}</div>
+                <div className="font-mono-tabular text-lg font-bold mt-1 text-emerald-700 dark:text-emerald-400">
+                  {formatCurrencyMinor(financeSummary.profitability.collectedMinor, 'DZD', lang, numerals)}
+                </div>
+              </div>
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+                <div className="text-xs text-slate-500">{t.finance.reports.vehicleExpenses}</div>
+                <div className="font-mono-tabular text-lg font-bold mt-1 text-rose-700 dark:text-rose-400">
+                  {formatCurrencyMinor(financeSummary.profitability.expensesMinor, 'DZD', lang, numerals)}
+                </div>
+              </div>
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+                <div className="text-xs text-slate-500">{t.finance.reports.netProfit}</div>
+                <div
+                  className={`font-mono-tabular text-lg font-bold mt-1 ${
+                    financeSummary.profitability.netProfitMinor >= 0
+                      ? 'text-blue-900 dark:text-blue-300'
+                      : 'text-rose-700 dark:text-rose-400'
+                  }`}
+                >
+                  {formatCurrencyMinor(financeSummary.profitability.netProfitMinor, 'DZD', lang, numerals)}
+                </div>
+                <div className="text-[11px] text-slate-500 mt-1 font-mono-tabular">
+                  {t.finance.reports.roi}:{' '}
+                  {financeSummary.profitability.roiPercent != null
+                    ? `${formatDigits(financeSummary.profitability.roiPercent.toFixed(1), numerals)}%`
+                    : '—'}
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <div className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  {t.finance.reports.finesSummary}
+                </div>
+                <div className="text-xs text-slate-500 mt-0.5 font-mono-tabular">
+                  {formatCurrencyMinor(financeSummary.totalFinesMinor, 'DZD', lang, numerals)} ·{' '}
+                  {t.finance.deposits.unpaidStatus}:{' '}
+                  <span className="font-semibold text-rose-700 dark:text-rose-400">
+                    {formatCurrencyMinor(financeSummary.unpaidFinesMinor, 'DZD', lang, numerals)}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab('expenses')}
+                className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                {t.vehicles.tabs.expenses} ({formatDigits(financeSummary.expenses.length, numerals)})
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-8 text-center text-sm text-slate-500">
+            {t.common.loading}
+          </div>
+        )
+      )}
+
+      {(activeTab === 'maintenance' || activeTab === 'photos') && (
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-8 text-center">
           <Lock className="w-6 h-6 mx-auto mb-2 text-slate-400" />
           <p className="text-sm text-slate-600 dark:text-slate-400">{t.vehicles.phaseFutureNotice}</p>

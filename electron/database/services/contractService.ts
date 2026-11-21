@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { AuthError } from '../../security/rbac.ts';
 import { writeAuditLog } from './auditService.ts';
 import { checkVehicleAvailability, recomputeVehicleStatus } from './availabilityService.ts';
+import { appendCashMovementIfOpenSession } from './cashRegisterService.ts';
 import { checkCustomerEligibility } from './customerService.ts';
 
 function generateContractNumber(db: Database.Database): string {
@@ -144,7 +145,13 @@ export function getContractDetail(db: Database.Database, contractId: number) {
     }));
 
   const payments = db
-    .prepare<[number], any>('SELECT * FROM contract_payments WHERE contract_id = ? ORDER BY id ASC')
+    .prepare<[number], any>(
+      `SELECT cp.*, rev.id AS reversed_by_payment_id
+       FROM contract_payments cp
+       LEFT JOIN contract_payments rev ON rev.reversal_of_payment_id = cp.id
+       WHERE cp.contract_id = ?
+       ORDER BY cp.id ASC`
+    )
     .all(contractId)
     .map((p) => ({
       id: p.id,
@@ -157,6 +164,8 @@ export function getContractDetail(db: Database.Database, contractId: number) {
       currency: p.currency,
       paymentDate: p.payment_date,
       description: p.description,
+      reversalOfPaymentId: p.reversal_of_payment_id ?? null,
+      isReversed: p.reversed_by_payment_id != null,
       createdAt: p.created_at,
     }));
 
@@ -223,7 +232,15 @@ export function getContractDetail(db: Database.Database, contractId: number) {
           returnedDate: deposit.returned_date,
           deductedAmountMinor: deposit.deducted_amount_minor,
           refundedAmountMinor: deposit.refunded_amount_minor,
+          remainingHeldMinor: Math.max(
+            0,
+            Number(deposit.amount_minor) -
+              Number(deposit.deducted_amount_minor ?? 0) -
+              Number(deposit.refunded_amount_minor ?? 0)
+          ),
           deductionReason: deposit.deduction_reason,
+          hasSupportingDoc: Boolean(deposit.supporting_doc_path),
+          supportingDocOriginalName: deposit.supporting_doc_original_name ?? null,
         }
       : null,
   };
@@ -400,46 +417,73 @@ export function createContract(
 
     // Separate Security Deposit ledger (NEVER mixed into rental revenue)
     if (input.depositAmountMinor > 0) {
+      const depCurrency = input.depositCurrency ?? 'DZD';
+      const depMethod = (input as any).depositPaymentMethod ?? 'CASH';
       const depRes = db
         .prepare(
           `INSERT INTO deposits (
-            contract_id, customer_id, amount_minor, currency, status, received_date, received_by_user_id
-          ) VALUES (?, ?, ?, ?, 'HELD', ?, ?)`
+            contract_id, customer_id, amount_minor, currency, status, received_date, received_method, received_by_user_id
+          ) VALUES (?, ?, ?, ?, 'HELD', ?, ?, ?)`
         )
         .run(
           contractId,
           input.customerId,
           input.depositAmountMinor,
-          input.depositCurrency ?? 'DZD',
+          depCurrency,
           new Date().toISOString().slice(0, 10),
+          depMethod,
           actor.id
         );
-      db.prepare(
-        `INSERT INTO deposit_movements (deposit_id, movement_type, amount_minor, reason, recorded_by_user_id)
-         VALUES (?, 'RECEIVED', ?, 'Caution reçue au contrat', ?)`
-      ).run(Number(depRes.lastInsertRowid), input.depositAmountMinor, actor.id);
+      const depMovRes = db
+        .prepare(
+          `INSERT INTO deposit_movements (deposit_id, movement_type, amount_minor, payment_method, reason, recorded_by_user_id)
+           VALUES (?, 'RECEIVED', ?, ?, 'Caution reçue au contrat', ?)`
+        )
+        .run(Number(depRes.lastInsertRowid), input.depositAmountMinor, depMethod, actor.id);
+
+      appendCashMovementIfOpenSession(db, {
+        actorId: actor.id,
+        currency: depCurrency,
+        paymentMethod: depMethod,
+        movementType: 'DEPOSIT_INFLOW',
+        amountMinor: input.depositAmountMinor,
+        depositMovementId: Number(depMovRes.lastInsertRowid),
+        description: `Caution reçue (${contractNumber})`,
+      });
     }
 
     // Initial rental payment (separate from deposit)
     if ((input.initialPaymentMinor ?? 0) > 0) {
       const codes = generatePaymentCodes(db);
-      db.prepare(
-        `INSERT INTO contract_payments (
-          transaction_code, receipt_number, contract_id, customer_id, direction, method,
-          payment_reference, amount_minor, currency, payment_date, description, recorded_by_user_id
-        ) VALUES (?, ?, ?, ?, 'INFLOW', ?, ?, ?, ?, ?, 'Paiement initial contrat', ?)`
-      ).run(
-        codes.transactionCode,
-        codes.receiptNumber,
-        contractId,
-        input.customerId,
-        input.initialPaymentMethod ?? 'CASH',
-        input.initialPaymentReference ?? null,
-        input.initialPaymentMinor,
-        input.currency,
-        new Date().toISOString().slice(0, 10),
-        actor.id
-      );
+      const payRes = db
+        .prepare(
+          `INSERT INTO contract_payments (
+            transaction_code, receipt_number, contract_id, customer_id, direction, method,
+            payment_reference, amount_minor, currency, payment_date, description, recorded_by_user_id
+          ) VALUES (?, ?, ?, ?, 'INFLOW', ?, ?, ?, ?, ?, 'Paiement initial contrat', ?)`
+        )
+        .run(
+          codes.transactionCode,
+          codes.receiptNumber,
+          contractId,
+          input.customerId,
+          input.initialPaymentMethod ?? 'CASH',
+          input.initialPaymentReference ?? null,
+          input.initialPaymentMinor,
+          input.currency,
+          new Date().toISOString().slice(0, 10),
+          actor.id
+        );
+
+      appendCashMovementIfOpenSession(db, {
+        actorId: actor.id,
+        currency: input.currency,
+        paymentMethod: input.initialPaymentMethod ?? 'CASH',
+        movementType: 'PAYMENT_INFLOW',
+        amountMinor: input.initialPaymentMinor,
+        paymentId: Number(payRes.lastInsertRowid),
+        description: `${codes.receiptNumber} (${contractNumber})`,
+      });
     }
 
     recomputeVehicleStatus(db, input.vehicleId);

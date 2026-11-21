@@ -25,6 +25,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth.tsx';
 import { useI18n } from '../hooks/useI18n.tsx';
 import { useTheme } from '../hooks/useTheme.tsx';
+import type { PermissionCode } from '../../shared/types/domain.ts';
 import { ChangePasswordModal } from '../features/auth/ChangePasswordModal.tsx';
 
 interface NavEntry {
@@ -33,6 +34,7 @@ interface NavEntry {
   icon: typeof LayoutDashboard;
   enabled: boolean;
   adminOnly?: boolean;
+  anyPermissions?: PermissionCode[];
 }
 
 const NAV_ENTRIES: NavEntry[] = [
@@ -42,11 +44,30 @@ const NAV_ENTRIES: NavEntry[] = [
   { to: '/customers', labelKey: 'customers', icon: Users, enabled: true },
   { to: '/contracts', labelKey: 'contracts', icon: FileText, enabled: true },
   { to: '/inspections', labelKey: 'inspections', icon: ClipboardCheck, enabled: false },
-  { to: '/finance', labelKey: 'finance', icon: Wallet, enabled: false },
+  {
+    to: '/finance',
+    labelKey: 'finance',
+    icon: Wallet,
+    enabled: true,
+    anyPermissions: [
+      'finance:read',
+      'finance:record_payment',
+      'finance:cash_register',
+      'finance:manage_deposit',
+      'finance:manage_expenses',
+      'finance:approve_adjustment',
+    ],
+  },
   { to: '/maintenance', labelKey: 'maintenance', icon: Wrench, enabled: false },
   { to: '/inventory', labelKey: 'inventory', icon: Package, enabled: false },
   { to: '/documents', labelKey: 'documents', icon: FileText, enabled: false },
-  { to: '/reports', labelKey: 'reports', icon: BarChart3, enabled: false },
+  {
+    to: '/reports',
+    labelKey: 'reports',
+    icon: BarChart3,
+    enabled: true,
+    anyPermissions: ['reports:view', 'finance:read'],
+  },
   { to: '/users', labelKey: 'users', icon: ShieldCheck, enabled: true, adminOnly: true },
   { to: '/settings', labelKey: 'settings', icon: Settings, enabled: true },
 ];
@@ -54,7 +75,7 @@ const NAV_ENTRIES: NavEntry[] = [
 export function ErpLayout({ children }: { children: ReactNode }) {
   const { t, lang, toggleLang } = useI18n();
   const { theme, toggleTheme } = useTheme();
-  const { session, runtimeMode, lock, logout } = useAuth();
+  const { session, runtimeMode, lock, logout, hasPermission } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
   const location = useLocation();
@@ -94,7 +115,12 @@ export function ErpLayout({ children }: { children: ReactNode }) {
         </div>
 
         <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
-          {NAV_ENTRIES.map((item) => {
+          {NAV_ENTRIES.filter((item) => {
+            if (item.anyPermissions && !item.anyPermissions.some((p) => hasPermission(p))) {
+              return false;
+            }
+            return true;
+          }).map((item) => {
             const Icon = item.icon;
             const label = t.nav[item.labelKey];
 

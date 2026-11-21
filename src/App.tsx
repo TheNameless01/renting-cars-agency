@@ -9,6 +9,7 @@ import { ContractsPage } from './features/contracts/ContractsPage.tsx';
 import { NewContractWizardPage } from './features/contracts/NewContractWizardPage.tsx';
 import { CustomerProfilePage } from './features/customers/CustomerProfilePage.tsx';
 import { CustomersPage } from './features/customers/CustomersPage.tsx';
+import { FinancePage } from './features/finance/FinancePage.tsx';
 import { Phase1HomePage } from './features/home/Phase1HomePage.tsx';
 import { PlanningPage } from './features/planning/PlanningPage.tsx';
 import { SettingsPage } from './features/settings/SettingsPage.tsx';
@@ -71,6 +72,8 @@ function AppContent() {
           <Route path="/contracts" element={<ContractsPage />} />
           <Route path="/contracts/new" element={<NewContractWizardPage />} />
           <Route path="/contracts/:id" element={<ContractDetailPage />} />
+          <Route path="/finance" element={<FinancePage />} />
+          <Route path="/reports" element={<FinancePage key="reports" defaultTab="reports" />} />
           <Route path="/users" element={<UsersPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

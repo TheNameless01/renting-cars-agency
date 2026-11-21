@@ -1,14 +1,33 @@
-import { AlertCircle, ArrowLeft, CalendarPlus, CheckCircle2, Play, XCircle } from 'lucide-react';
+import {
+  AlertCircle,
+  ArrowLeft,
+  CalendarPlus,
+  CheckCircle2,
+  Play,
+  Plus,
+  Receipt,
+  RotateCcw,
+  ShieldCheck,
+  XCircle,
+} from 'lucide-react';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { toMinorUnits } from '../../../shared/constants/algeria.ts';
+import { fromMinorUnits, toMinorUnits } from '../../../shared/constants/algeria.ts';
+import type { PaymentDirection, PaymentMethod } from '../../../shared/types/domain.ts';
 import { ConfirmDialog } from '../../components/ConfirmDialog.tsx';
 import { ModalDialog } from '../../components/ModalDialog.tsx';
 import { useToast } from '../../components/Toast.tsx';
 import { useAuth } from '../../hooks/useAuth.tsx';
 import { useI18n } from '../../hooks/useI18n.tsx';
-import { erpClient, type AvailabilityResultDto, type ContractDetailDto } from '../../lib/apiClient.ts';
+import {
+  erpClient,
+  type AvailabilityResultDto,
+  type ContractDetailDto,
+  type PaymentReceiptDto,
+} from '../../lib/apiClient.ts';
 import { formatCurrencyMinor, formatDateTimeAlgiers, formatDigits } from '../../lib/formatters.ts';
+import { DepositSettleModal } from '../finance/DepositSettleModal.tsx';
+import { PaymentReceiptModal } from '../finance/PaymentReceiptModal.tsx';
 
 type DetailTab = 'summary' | 'extensions' | 'payments';
 
@@ -65,9 +84,28 @@ export function ContractDetailPage() {
   const [cancelling, setCancelling] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
 
+  // Phase 3: Payments & Deposit settlement
+  const [showPayModal, setShowPayModal] = useState(false);
+  const [submittingPay, setSubmittingPay] = useState(false);
+  const [payDirection, setPayDirection] = useState<PaymentDirection>('INFLOW');
+  const [payMethod, setPayMethod] = useState<PaymentMethod>('CASH');
+  const [payRef, setPayRef] = useState('');
+  const [payAmountMajor, setPayAmountMajor] = useState('');
+  const [payDate, setPayDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [payDesc, setPayDesc] = useState('');
+
+  const [receipt, setReceipt] = useState<PaymentReceiptDto | null>(null);
+  const [reversePayId, setReversePayId] = useState<number | null>(null);
+  const [reverseReason, setReverseReason] = useState('');
+  const [reversingPay, setReversingPay] = useState(false);
+  const [settleDepositId, setSettleDepositId] = useState<number | null>(null);
+
   const canWrite = hasPermission('contracts:write');
   const canExtend = hasPermission('contracts:extend');
   const canCancel = hasPermission('contracts:cancel');
+  const canRecordPayment = hasPermission('finance:record_payment');
+  const canReversePayment = hasPermission('finance:approve_adjustment');
+  const canManageDeposit = hasPermission('finance:manage_deposit');
 
   const loadDetail = useCallback(async () => {
     if (!id) return;
@@ -240,6 +278,72 @@ export function ContractDetailPage() {
       showError(err instanceof Error ? err.message : t.common.error);
     } finally {
       setCancelling(false);
+    }
+  };
+
+  const openPayModal = () => {
+    if (!detail) return;
+    setPayDirection('INFLOW');
+    setPayMethod('CASH');
+    setPayRef('');
+    setPayAmountMajor(
+      detail.contract.outstandingMinor > 0
+        ? String(fromMinorUnits(detail.contract.outstandingMinor))
+        : ''
+    );
+    setPayDate(new Date().toISOString().slice(0, 10));
+    setPayDesc('');
+    setShowPayModal(true);
+  };
+
+  const handleRecordPayment = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!detail) return;
+    setSubmittingPay(true);
+    try {
+      const createdReceipt = await erpClient.recordPayment({
+        contractId: detail.contract.id,
+        direction: payDirection,
+        method: payMethod,
+        paymentReference: payRef.trim() || null,
+        amountMinor: toMinorUnits(Number(payAmountMajor || 0)),
+        currency: detail.contract.currency,
+        paymentDate: payDate,
+        description: payDesc.trim() || null,
+      });
+      showSuccess(createdReceipt.payment.receiptNumber);
+      setShowPayModal(false);
+      setReceipt(createdReceipt);
+      await loadDetail();
+    } catch (err) {
+      showError(err instanceof Error ? err.message : t.common.error);
+    } finally {
+      setSubmittingPay(false);
+    }
+  };
+
+  const handleOpenReceipt = async (paymentId: number) => {
+    try {
+      const res = await erpClient.getPaymentReceipt(paymentId);
+      setReceipt(res);
+    } catch (err) {
+      showError(err instanceof Error ? err.message : t.common.error);
+    }
+  };
+
+  const handleConfirmReversePayment = async () => {
+    if (reversePayId == null || reverseReason.trim().length < 3) return;
+    setReversingPay(true);
+    try {
+      const revReceipt = await erpClient.reversePayment(reversePayId, reverseReason.trim());
+      showSuccess(revReceipt.payment.receiptNumber);
+      setReversePayId(null);
+      setReverseReason('');
+      await loadDetail();
+    } catch (err) {
+      showError(err instanceof Error ? err.message : t.common.error);
+    } finally {
+      setReversingPay(false);
     }
   };
 
@@ -515,36 +619,147 @@ export function ContractDetailPage() {
 
       {activeTab === 'payments' && (
         <div className="space-y-6">
+          {/* Security Deposit Card */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="space-y-1">
+              <div className="text-xs font-semibold text-slate-500">
+                {t.contracts.depositLabel}
+              </div>
+              {deposit ? (
+                <div className="flex flex-wrap items-center gap-4 text-xs">
+                  <span>
+                    <strong className="font-mono-tabular text-sm">
+                      {formatCurrencyMinor(deposit.amountMinor, deposit.currency, lang, numerals)}
+                    </strong>{' '}
+                    · {t.finance.depositStatuses[deposit.status]}
+                  </span>
+                  <span className="text-rose-700 dark:text-rose-400 font-mono-tabular">
+                    {t.finance.deposits.deductedAmount}:{' '}
+                    {formatCurrencyMinor(deposit.deductedAmountMinor, deposit.currency, lang, numerals)}
+                  </span>
+                  <span className="text-emerald-700 dark:text-emerald-400 font-mono-tabular">
+                    {t.finance.deposits.refundedAmount}:{' '}
+                    {formatCurrencyMinor(deposit.refundedAmountMinor, deposit.currency, lang, numerals)}
+                  </span>
+                  <span className="text-amber-700 dark:text-amber-400 font-mono-tabular font-semibold">
+                    {t.finance.deposits.remainingHeld}:{' '}
+                    {formatCurrencyMinor(deposit.remainingHeldMinor, deposit.currency, lang, numerals)}
+                  </span>
+                </div>
+              ) : (
+                <div className="text-xs text-slate-500">{t.finance.deposits.emptyDeposits}</div>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {deposit && (
+                <button
+                  type="button"
+                  onClick={() => setSettleDepositId(deposit.id)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>
+                    {canManageDeposit && deposit.remainingHeldMinor > 0
+                      ? t.finance.deposits.settleDeposit
+                      : t.common.view}
+                  </span>
+                </button>
+              )}
+              {canRecordPayment && c.status !== 'CANCELLED' && (
+                <button
+                  type="button"
+                  onClick={openPayModal}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-blue-900 hover:bg-blue-800 dark:bg-blue-700 dark:hover:bg-blue-600 text-white text-xs font-medium"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>{t.finance.payments.recordPayment}</span>
+                </button>
+              )}
+            </div>
+          </div>
+
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-xs text-slate-500">
                   <tr>
                     <th className="px-4 py-3 text-start">Code / Reçu</th>
-                    <th className="px-4 py-3 text-start">Date</th>
+                    <th className="px-4 py-3 text-start">{t.finance.payments.paymentDateLabel}</th>
                     <th className="px-4 py-3 text-start">{t.contracts.paymentMethod}</th>
-                    <th className="px-4 py-3 text-end">Montant</th>
+                    <th className="px-4 py-3 text-end">{t.finance.payments.amountLabel}</th>
+                    <th className="px-4 py-3 text-end">{t.users.actions}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                   {payments.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="px-4 py-8 text-center text-slate-500">
-                        —
+                      <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                        {t.finance.payments.empty}
                       </td>
                     </tr>
                   ) : (
                     payments.map((p) => (
                       <tr key={p.id}>
                         <td className="px-4 py-3 font-mono-tabular text-xs">
-                          {p.transactionCode} · {p.receiptNumber}
+                          <div>
+                            {formatDigits(p.transactionCode, numerals)} ·{' '}
+                            {formatDigits(p.receiptNumber, numerals)}
+                          </div>
+                          {p.isReversed && (
+                            <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-[10px] font-sans">
+                              {t.finance.payments.reversedBadge}
+                            </span>
+                          )}
+                          {p.reversalOfPaymentId != null && (
+                            <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-[10px] font-sans">
+                              {t.finance.payments.reversalEntryBadge}
+                            </span>
+                          )}
                         </td>
-                        <td className="px-4 py-3 font-mono-tabular text-xs">{p.paymentDate}</td>
+                        <td className="px-4 py-3 font-mono-tabular text-xs">
+                          {formatDigits(p.paymentDate, numerals)}
+                        </td>
                         <td className="px-4 py-3 text-xs">
-                          {p.method} {p.paymentReference ? `(${p.paymentReference})` : ''}
+                          <div>{t.finance.methods[p.method]}</div>
+                          {p.paymentReference && (
+                            <div className="font-mono-tabular text-slate-500">{p.paymentReference}</div>
+                          )}
                         </td>
-                        <td className="px-4 py-3 text-end font-mono-tabular font-semibold">
+                        <td
+                          className={`px-4 py-3 text-end font-mono-tabular font-semibold ${
+                            p.direction === 'REFUND'
+                              ? 'text-rose-700 dark:text-rose-400'
+                              : 'text-emerald-700 dark:text-emerald-400'
+                          }`}
+                        >
+                          {p.direction === 'REFUND' ? '−' : '+'}
                           {formatCurrencyMinor(p.amountMinor, p.currency, lang, numerals)}
+                        </td>
+                        <td className="px-4 py-3 text-end text-xs">
+                          <div className="inline-flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => void handleOpenReceipt(p.id)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                            >
+                              <Receipt className="w-3 h-3" />
+                              <span>{t.finance.payments.viewReceipt}</span>
+                            </button>
+                            {canReversePayment && !p.isReversed && p.reversalOfPaymentId == null && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setReversePayId(p.id);
+                                  setReverseReason('');
+                                }}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                              >
+                                <RotateCcw className="w-3 h-3" />
+                                <span>{t.finance.payments.reversePayment}</span>
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))
@@ -552,9 +767,6 @@ export function ContractDetailPage() {
                 </tbody>
               </table>
             </div>
-          </div>
-          <div className="text-xs text-slate-500">
-            {t.vehicles.phaseFutureNotice}
           </div>
         </div>
       )}
@@ -875,6 +1087,156 @@ export function ContractDetailPage() {
           />
         </div>
       </ModalDialog>
+
+      {/* Record Payment Modal */}
+      <ModalDialog
+        open={showPayModal}
+        onClose={() => {
+          if (!submittingPay) setShowPayModal(false);
+        }}
+        title={t.finance.payments.recordPayment}
+        subtitle={`${c.contractNumber} · ${c.customerName}`}
+        size="md"
+        disableClose={submittingPay}
+        onSubmit={handleRecordPayment}
+        footer={
+          <>
+            <button
+              type="button"
+              disabled={submittingPay}
+              onClick={() => setShowPayModal(false)}
+              className="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium"
+            >
+              {t.common.cancel}
+            </button>
+            <button
+              type="submit"
+              disabled={submittingPay}
+              className="px-4 py-2 rounded-lg bg-blue-900 dark:bg-blue-700 text-white text-xs font-medium disabled:opacity-50"
+            >
+              {submittingPay ? t.common.loading : t.common.save}
+            </button>
+          </>
+        }
+      >
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium mb-1">
+              {t.finance.payments.directionLabel}
+            </label>
+            <select
+              value={payDirection}
+              onChange={(e) => setPayDirection(e.target.value as PaymentDirection)}
+              className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
+            >
+              <option value="INFLOW">{t.finance.directions.INFLOW}</option>
+              <option value="REFUND">{t.finance.directions.REFUND}</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">
+              {t.finance.payments.methodLabel}
+            </label>
+            <select
+              value={payMethod}
+              onChange={(e) => setPayMethod(e.target.value as PaymentMethod)}
+              className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
+            >
+              {(['CASH', 'CCP', 'BARIDIMOB', 'BANK_TRANSFER', 'OTHER'] as const).map((m) => (
+                <option key={m} value={m}>
+                  {t.finance.methods[m]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">
+              {t.finance.payments.amountLabel} ({c.currency}) *
+            </label>
+            <input
+              type="number"
+              required
+              min={0.01}
+              step="0.01"
+              dir="ltr"
+              data-autofocus
+              value={payAmountMajor}
+              onChange={(e) => setPayAmountMajor(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm font-mono-tabular"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">
+              {t.finance.payments.paymentDateLabel} *
+            </label>
+            <input
+              type="date"
+              required
+              dir="ltr"
+              value={payDate}
+              onChange={(e) => setPayDate(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm font-mono-tabular"
+            />
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs font-medium mb-1">
+            {t.finance.payments.referenceLabel}
+          </label>
+          <input
+            dir="ltr"
+            value={payRef}
+            onChange={(e) => setPayRef(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm font-mono-tabular"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium mb-1">
+            {t.finance.payments.descriptionLabel}
+          </label>
+          <textarea
+            rows={2}
+            value={payDesc}
+            onChange={(e) => setPayDesc(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
+          />
+        </div>
+      </ModalDialog>
+
+      <PaymentReceiptModal receipt={receipt} onClose={() => setReceipt(null)} />
+
+      <DepositSettleModal
+        depositId={settleDepositId}
+        onClose={() => setSettleDepositId(null)}
+        onSettled={loadDetail}
+      />
+
+      <ConfirmDialog
+        open={reversePayId != null}
+        onClose={() => {
+          if (!reversingPay) setReversePayId(null);
+        }}
+        onConfirm={handleConfirmReversePayment}
+        tone="danger"
+        loading={reversingPay}
+        title={t.finance.payments.reverseTitle}
+        description={c.contractNumber}
+        warningText={t.finance.payments.reverseWarn}
+        confirmLabel={t.finance.payments.reversePayment}
+      >
+        <div>
+          <label className="block text-xs font-medium mb-1">
+            {t.finance.payments.reverseReason} *
+          </label>
+          <textarea
+            rows={2}
+            required
+            value={reverseReason}
+            onChange={(e) => setReverseReason(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
+          />
+        </div>
+      </ConfirmDialog>
     </div>
   );
 }

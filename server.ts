@@ -18,6 +18,14 @@ import {
 } from './electron/database/services/authService.ts';
 import { checkVehicleAvailability, getPlanningCalendar } from './electron/database/services/availabilityService.ts';
 import {
+  closeCashSession,
+  getCashSessionDetail,
+  getCurrentCashSession,
+  listCashSessions,
+  openCashSession,
+  recordCashAdjustment,
+} from './electron/database/services/cashRegisterService.ts';
+import {
   activateContract,
   cancelContract,
   completeContract,
@@ -26,6 +34,11 @@ import {
   getContractDetail,
   listContracts,
 } from './electron/database/services/contractService.ts';
+import {
+  createCustomerAdjustment,
+  getCustomerFinancialLedger,
+  listCustomerFinancialAccounts,
+} from './electron/database/services/customerFinanceService.ts';
 import {
   addCustomerRiskRecord,
   archiveCustomer,
@@ -39,6 +52,28 @@ import {
   uploadCustomerDocument,
 } from './electron/database/services/customerService.ts';
 import {
+  createTrafficFine,
+  getDepositDetail,
+  listDeposits,
+  listTrafficFines,
+  readDepositDocument,
+  settleDeposit,
+} from './electron/database/services/depositService.ts';
+import {
+  createSupplier,
+  listExpenses,
+  listSuppliers,
+  readExpenseDocument,
+  recordExpense,
+  reverseExpense,
+} from './electron/database/services/expenseService.ts';
+import {
+  buildFinancialReportCsv,
+  getFinancialDashboardReports,
+  getVehicleFinanceSummary,
+  getVehicleProfitabilityReport,
+} from './electron/database/services/financeReportService.ts';
+import {
   archiveVehicle,
   createVehicle,
   createVehicleBlockedPeriod,
@@ -48,6 +83,12 @@ import {
   updateVehicle,
   upsertVehicleDocument,
 } from './electron/database/services/fleetService.ts';
+import {
+  getPaymentReceipt,
+  listPayments,
+  recordPayment,
+  reversePayment,
+} from './electron/database/services/paymentService.ts';
 import {
   calculateRentalPrice,
   createSeasonalRate,
@@ -71,18 +112,29 @@ import {
   BootstrapAdminSchema,
   CalculatePriceSchema,
   ChangePasswordSchema,
+  CloseCashSessionSchema,
   CompleteContractSchema,
   CreateBlockedPeriodSchema,
   CreateContractPhase2Schema,
+  CreateCustomerAdjustmentSchema,
   CreateCustomerSchema,
+  CreateExpenseSchema,
   CreateReservationSchema,
   CreateRiskRecordSchema,
   CreateSeasonalRateSchema,
+  CreateSupplierSchema,
+  CreateTrafficFineSchema,
   CreateUserSchema,
   CreateVehicleSchema,
   ExtendContractSchema,
   LoginSchema,
+  OpenCashSessionSchema,
+  RecordCashAdjustmentSchema,
+  RecordPaymentSchema,
   ResolveRiskRecordSchema,
+  ReverseExpenseSchema,
+  ReversePaymentSchema,
+  SettleDepositSchema,
   UnlockSessionSchema,
   UpdateCustomerSchema,
   UpdateReservationStatusSchema,
@@ -130,6 +182,12 @@ export function createPreviewExpressApp(customDbPath?: string) {
       .get(userId);
     if (!row) return false;
     return resolveEffectivePermissions(db, userId, row.role_id).includes(perm);
+  };
+
+  const requireAnyPermission = (userId: number, perms: PermissionCode[]) => {
+    if (!perms.some((p) => hasLivePerm(userId, p))) {
+      throw new AuthError('FORBIDDEN', `Permission insuffisante (${perms.join(' | ')})`);
+    }
   };
 
   const handleError = (res: express.Response, err: unknown) => {
@@ -861,6 +919,443 @@ export function createPreviewExpressApp(customDbPath?: string) {
         reason
       );
       res.json({ ok: true, data: updated });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  // ============================================================================
+  // Phase 3: Financial Management
+  // ============================================================================
+  app.get(`${PREVIEW_ENDPOINTS.FINANCE}/payments`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['finance:read', 'finance:record_payment']);
+      res.json({
+        ok: true,
+        data: listPayments(db, {
+          contractId: req.query.contractId ? Number(req.query.contractId) : undefined,
+          customerId: req.query.customerId ? Number(req.query.customerId) : undefined,
+          method: typeof req.query.method === 'string' ? req.query.method : undefined,
+          direction: typeof req.query.direction === 'string' ? req.query.direction : undefined,
+          dateFrom: typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined,
+          dateTo: typeof req.query.dateTo === 'string' ? req.query.dateTo : undefined,
+          search: typeof req.query.search === 'string' ? req.query.search : undefined,
+        }),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.FINANCE}/payments`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'finance:record_payment');
+      const parsed = RecordPaymentSchema.parse(req.body);
+      res.status(201).json({
+        ok: true,
+        data: recordPayment(db, { id: session.userId, username: session.username }, parsed),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.FINANCE}/payments/:id/reverse`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'finance:approve_adjustment');
+      const parsed = ReversePaymentSchema.parse({ ...req.body, paymentId: Number(req.params.id) });
+      res.json({
+        ok: true,
+        data: reversePayment(db, { id: session.userId, username: session.username }, parsed),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.FINANCE}/payments/:id/receipt`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, [
+        'finance:read',
+        'finance:record_payment',
+        'contracts:read',
+        'documents:generate',
+      ]);
+      res.json({ ok: true, data: getPaymentReceipt(db, Number(req.params.id)) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.FINANCE}/deposits`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['finance:read', 'finance:manage_deposit']);
+      res.json({
+        ok: true,
+        data: listDeposits(db, {
+          status: typeof req.query.status === 'string' ? req.query.status : undefined,
+          customerId: req.query.customerId ? Number(req.query.customerId) : undefined,
+          search: typeof req.query.search === 'string' ? req.query.search : undefined,
+        }),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.FINANCE}/deposits/:id`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['finance:read', 'finance:manage_deposit', 'contracts:read']);
+      res.json({ ok: true, data: getDepositDetail(db, Number(req.params.id)) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.FINANCE}/deposits/:id/settle`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'finance:manage_deposit');
+      const parsed = SettleDepositSchema.parse({ ...req.body, depositId: Number(req.params.id) });
+      res.json({
+        ok: true,
+        data: settleDeposit(
+          db,
+          { id: session.userId, username: session.username },
+          previewVaultDir,
+          previewVaultKey,
+          parsed
+        ),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.FINANCE}/deposits/:id/document`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['finance:read', 'finance:manage_deposit']);
+      res.json({
+        ok: true,
+        data: readDepositDocument(db, previewVaultDir, previewVaultKey, Number(req.params.id)),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.FINANCE}/fines`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['finance:read', 'finance:manage_deposit']);
+      res.json({
+        ok: true,
+        data: listTrafficFines(db, {
+          contractId: req.query.contractId ? Number(req.query.contractId) : undefined,
+          customerId: req.query.customerId ? Number(req.query.customerId) : undefined,
+        }),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.FINANCE}/fines`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'finance:manage_deposit');
+      const parsed = CreateTrafficFineSchema.parse(req.body);
+      res.status(201).json({
+        ok: true,
+        data: createTrafficFine(db, { id: session.userId, username: session.username }, parsed),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.FINANCE}/customers/accounts`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['finance:read', 'reports:view', 'finance:approve_adjustment']);
+      res.json({
+        ok: true,
+        data: listCustomerFinancialAccounts(db, {
+          search: typeof req.query.search === 'string' ? req.query.search : undefined,
+          onlyWithBalance: req.query.onlyWithBalance === 'true',
+          onlyOverdue: req.query.onlyOverdue === 'true',
+        }),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.FINANCE}/customers/:id/ledger`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, [
+        'finance:read',
+        'reports:view',
+        'finance:approve_adjustment',
+        'customers:read',
+      ]);
+      res.json({ ok: true, data: getCustomerFinancialLedger(db, Number(req.params.id)) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.FINANCE}/customers/:id/adjustments`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'finance:approve_adjustment');
+      const parsed = CreateCustomerAdjustmentSchema.parse({
+        ...req.body,
+        customerId: Number(req.params.id),
+      });
+      res.status(201).json({
+        ok: true,
+        data: createCustomerAdjustment(db, { id: session.userId, username: session.username }, parsed),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.FINANCE}/suppliers`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['finance:read', 'finance:manage_expenses']);
+      res.json({ ok: true, data: listSuppliers(db) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.FINANCE}/suppliers`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'finance:manage_expenses');
+      const parsed = CreateSupplierSchema.parse(req.body);
+      res.status(201).json({
+        ok: true,
+        data: createSupplier(db, { id: session.userId, username: session.username }, parsed),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.FINANCE}/expenses`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['finance:read', 'finance:manage_expenses']);
+      res.json({
+        ok: true,
+        data: listExpenses(db, {
+          category: typeof req.query.category === 'string' ? req.query.category : undefined,
+          vehicleId: req.query.vehicleId ? Number(req.query.vehicleId) : undefined,
+          supplierId: req.query.supplierId ? Number(req.query.supplierId) : undefined,
+          status: typeof req.query.status === 'string' ? req.query.status : undefined,
+          scope:
+            req.query.scope === 'VEHICLE' || req.query.scope === 'AGENCY' ? req.query.scope : 'ALL',
+          dateFrom: typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined,
+          dateTo: typeof req.query.dateTo === 'string' ? req.query.dateTo : undefined,
+          search: typeof req.query.search === 'string' ? req.query.search : undefined,
+        }),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.FINANCE}/expenses`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'finance:manage_expenses');
+      const parsed = CreateExpenseSchema.parse(req.body);
+      res.status(201).json({
+        ok: true,
+        data: recordExpense(
+          db,
+          { id: session.userId, username: session.username },
+          previewVaultDir,
+          previewVaultKey,
+          parsed
+        ),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.FINANCE}/expenses/:id/reverse`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'finance:approve_adjustment');
+      const parsed = ReverseExpenseSchema.parse({ ...req.body, expenseId: Number(req.params.id) });
+      res.json({
+        ok: true,
+        data: reverseExpense(db, { id: session.userId, username: session.username }, parsed),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.FINANCE}/expenses/:id/document`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['finance:read', 'finance:manage_expenses']);
+      res.json({
+        ok: true,
+        data: readExpenseDocument(db, previewVaultDir, previewVaultKey, Number(req.params.id)),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.FINANCE}/cash-register/current`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['finance:read', 'finance:cash_register']);
+      res.json({ ok: true, data: getCurrentCashSession(db) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.FINANCE}/cash-register/sessions`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['finance:read', 'finance:cash_register']);
+      const limit = req.query.limit ? Number(req.query.limit) : 90;
+      res.json({ ok: true, data: listCashSessions(db, limit) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.FINANCE}/cash-register/sessions/:id`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['finance:read', 'finance:cash_register']);
+      res.json({ ok: true, data: getCashSessionDetail(db, Number(req.params.id)) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.FINANCE}/cash-register/open`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'finance:cash_register');
+      const parsed = OpenCashSessionSchema.parse(req.body);
+      res.status(201).json({
+        ok: true,
+        data: openCashSession(db, { id: session.userId, username: session.username }, parsed),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.FINANCE}/cash-register/sessions/:id/close`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'finance:cash_register');
+      const parsed = CloseCashSessionSchema.parse({ ...req.body, sessionId: Number(req.params.id) });
+      res.json({
+        ok: true,
+        data: closeCashSession(db, { id: session.userId, username: session.username }, parsed),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.FINANCE}/cash-register/sessions/:id/adjustment`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'finance:approve_adjustment');
+      const parsed = RecordCashAdjustmentSchema.parse({ ...req.body, sessionId: Number(req.params.id) });
+      res.status(201).json({
+        ok: true,
+        data: recordCashAdjustment(db, { id: session.userId, username: session.username }, parsed),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.REPORTS}/dashboard`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['finance:read', 'reports:view']);
+      res.json({
+        ok: true,
+        data: getFinancialDashboardReports(db, {
+          dateFrom: typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined,
+          dateTo: typeof req.query.dateTo === 'string' ? req.query.dateTo : undefined,
+        }),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.REPORTS}/vehicle-profitability`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['finance:read', 'reports:view']);
+      res.json({
+        ok: true,
+        data: getVehicleProfitabilityReport(db, {
+          dateFrom: typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined,
+          dateTo: typeof req.query.dateTo === 'string' ? req.query.dateTo : undefined,
+          includeArchived: req.query.includeArchived === 'true',
+        }),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.FINANCE}/vehicles/:id/summary`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['finance:read', 'finance:manage_expenses', 'reports:view']);
+      res.json({ ok: true, data: getVehicleFinanceSummary(db, Number(req.params.id)) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.REPORTS}/export-csv`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['finance:read', 'reports:view']);
+      const report = getFinancialDashboardReports(db, {
+        dateFrom: typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined,
+        dateTo: typeof req.query.dateTo === 'string' ? req.query.dateTo : undefined,
+      });
+      const lang = req.query.lang === 'ar' ? 'ar' : 'fr';
+      res.json({
+        ok: true,
+        data: {
+          fileName: `rapport-financier-${report.dateFrom}_${report.dateTo}.csv`,
+          csvContent: buildFinancialReportCsv(report, lang),
+        },
+      });
     } catch (err) {
       handleError(res, err);
     }

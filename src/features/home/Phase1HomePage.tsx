@@ -1,10 +1,23 @@
-import { ArrowRight, CalendarDays, Car, Database, FileText, MapPin, Settings, ShieldCheck, Users } from 'lucide-react';
+import {
+  ArrowRight,
+  BarChart3,
+  CalendarDays,
+  Car,
+  Database,
+  FileText,
+  MapPin,
+  Settings,
+  ShieldCheck,
+  Users,
+  Vault,
+  Wallet,
+} from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth.tsx';
 import { useI18n } from '../../hooks/useI18n.tsx';
 import { erpClient } from '../../lib/apiClient.ts';
-import { formatDigits } from '../../lib/formatters.ts';
+import { formatCurrencyMinor, formatDigits } from '../../lib/formatters.ts';
 
 interface LiveOperationalSummary {
   wilayas: number;
@@ -13,22 +26,47 @@ interface LiveOperationalSummary {
   customersTotal: number;
   contractsActive: number;
   reservationsOpen: number;
+  cashBalanceMinor: number | null;
+  cashSessionOpen: boolean;
+  heldDepositsDzdMinor: number | null;
+  monthCollectedNetMinor: number | null;
 }
 
 export function Phase1HomePage() {
   const { session, runtimeMode, hasPermission } = useAuth();
-  const { t, numerals } = useI18n();
+  const { t, lang, numerals } = useI18n();
   const [summary, setSummary] = useState<LiveOperationalSummary | null>(null);
 
+  const canViewFinanceReport = hasPermission('finance:read') || hasPermission('reports:view');
+  const canViewCash = hasPermission('finance:cash_register') || hasPermission('finance:read');
+
   useEffect(() => {
+    const now = new Date();
+    const dateFrom = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+    const dateTo = now.toISOString().slice(0, 10);
+
     Promise.all([
       erpClient.listWilayas(true),
       erpClient.listVehicles({ includeArchived: false }),
       erpClient.listCustomers({ includeArchived: false }),
       erpClient.listContracts(),
       erpClient.listReservations(),
+      canViewFinanceReport
+        ? erpClient.getFinancialDashboardReports({ dateFrom, dateTo }).catch(() => null)
+        : Promise.resolve(null),
+      canViewCash
+        ? erpClient.getCurrentCashSession().catch(() => null)
+        : Promise.resolve(null),
     ])
-      .then(([wilayas, vehicles, customers, contracts, reservations]) => {
+      .then(([wilayas, vehicles, customers, contracts, reservations, finReport, cashCurrent]) => {
+        const cashBalanceMinor = cashCurrent?.session
+          ? cashCurrent.session.expectedClosingMinor
+          : finReport
+            ? (finReport.summary.openCashSessionBalanceMinor ?? finReport.summary.lastClosedCashBalanceMinor)
+            : cashCurrent
+              ? cashCurrent.suggestedOpeningBalanceMinor
+              : null;
+
         setSummary({
           wilayas: wilayas.length,
           vehiclesTotal: vehicles.length,
@@ -36,10 +74,14 @@ export function Phase1HomePage() {
           customersTotal: customers.length,
           contractsActive: contracts.filter((c) => c.status === 'ACTIVE' || c.status === 'EXTENDED').length,
           reservationsOpen: reservations.filter((r) => r.status === 'PENDING' || r.status === 'CONFIRMED').length,
+          cashBalanceMinor,
+          cashSessionOpen: Boolean(cashCurrent?.session || finReport?.summary.openCashSessionDate),
+          heldDepositsDzdMinor: finReport ? finReport.summary.depositsCurrentlyHeldDzdMinor : null,
+          monthCollectedNetMinor: finReport ? finReport.summary.collectedNetMinor : null,
         });
       })
       .catch(() => setSummary(null));
-  }, []);
+  }, [canViewCash, canViewFinanceReport]);
 
   if (!session) return null;
 
@@ -116,6 +158,69 @@ export function Phase1HomePage() {
           </p>
         </Link>
       </div>
+
+      {/* Live Financial Quick Access (shown according to RBAC permissions) */}
+      {(canViewCash || canViewFinanceReport) && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {canViewCash && (
+            <Link
+              to="/finance"
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 hover:border-blue-400 dark:hover:border-blue-700 transition-colors"
+            >
+              <div className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">
+                <Vault className="w-4 h-4 text-blue-800 dark:text-blue-400" />
+                <span>{t.finance.reports.cashPosition}</span>
+              </div>
+              <div className="text-xl font-semibold font-mono-tabular text-slate-900 dark:text-slate-100">
+                {summary && summary.cashBalanceMinor != null
+                  ? formatCurrencyMinor(summary.cashBalanceMinor, 'DZD', lang, numerals)
+                  : '—'}
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                {summary?.cashSessionOpen
+                  ? t.finance.cash.activeSessionBadge
+                  : t.finance.cash.noOpenSession}
+              </p>
+            </Link>
+          )}
+
+          {canViewFinanceReport && (
+            <>
+              <Link
+                to="/finance"
+                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 hover:border-blue-400 dark:hover:border-blue-700 transition-colors"
+              >
+                <div className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">
+                  <Wallet className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                  <span>{t.finance.reports.depositsHeldLiability}</span>
+                </div>
+                <div className="text-xl font-semibold font-mono-tabular text-amber-700 dark:text-amber-400">
+                  {summary && summary.heldDepositsDzdMinor != null
+                    ? formatCurrencyMinor(summary.heldDepositsDzdMinor, 'DZD', lang, numerals)
+                    : '—'}
+                </div>
+                <p className="text-xs text-slate-500 mt-1">{t.finance.tabs.deposits}</p>
+              </Link>
+
+              <Link
+                to="/reports"
+                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 hover:border-blue-400 dark:hover:border-blue-700 transition-colors"
+              >
+                <div className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">
+                  <BarChart3 className="w-4 h-4 text-emerald-700 dark:text-emerald-400" />
+                  <span>{t.finance.reports.netCollected}</span>
+                </div>
+                <div className="text-xl font-semibold font-mono-tabular text-emerald-700 dark:text-emerald-400">
+                  {summary && summary.monthCollectedNetMinor != null
+                    ? formatCurrencyMinor(summary.monthCollectedNetMinor, 'DZD', lang, numerals)
+                    : '—'}
+                </div>
+                <p className="text-xs text-slate-500 mt-1">{t.finance.reports.presetThisMonth}</p>
+              </Link>
+            </>
+          )}
+        </div>
+      )}
 
       {/* System & Security Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

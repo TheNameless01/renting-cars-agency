@@ -4,18 +4,29 @@ import {
   BootstrapAdminSchema,
   CalculatePriceSchema,
   ChangePasswordSchema,
+  CloseCashSessionSchema,
   CompleteContractSchema,
   CreateBlockedPeriodSchema,
   CreateContractPhase2Schema,
+  CreateCustomerAdjustmentSchema,
   CreateCustomerSchema,
+  CreateExpenseSchema,
   CreateReservationSchema,
   CreateRiskRecordSchema,
   CreateSeasonalRateSchema,
+  CreateSupplierSchema,
+  CreateTrafficFineSchema,
   CreateUserSchema,
   CreateVehicleSchema,
   ExtendContractSchema,
   LoginSchema,
+  OpenCashSessionSchema,
+  RecordCashAdjustmentSchema,
+  RecordPaymentSchema,
   ResolveRiskRecordSchema,
+  ReverseExpenseSchema,
+  ReversePaymentSchema,
+  SettleDepositSchema,
   UnlockSessionSchema,
   UpdateCustomerSchema,
   UpdateReservationStatusSchema,
@@ -40,6 +51,14 @@ import {
 } from '../database/services/authService.ts';
 import { checkVehicleAvailability, getPlanningCalendar } from '../database/services/availabilityService.ts';
 import {
+  closeCashSession,
+  getCashSessionDetail,
+  getCurrentCashSession,
+  listCashSessions,
+  openCashSession,
+  recordCashAdjustment,
+} from '../database/services/cashRegisterService.ts';
+import {
   activateContract,
   cancelContract,
   completeContract,
@@ -48,6 +67,11 @@ import {
   getContractDetail,
   listContracts,
 } from '../database/services/contractService.ts';
+import {
+  createCustomerAdjustment,
+  getCustomerFinancialLedger,
+  listCustomerFinancialAccounts,
+} from '../database/services/customerFinanceService.ts';
 import {
   addCustomerRiskRecord,
   archiveCustomer,
@@ -61,6 +85,28 @@ import {
   uploadCustomerDocument,
 } from '../database/services/customerService.ts';
 import {
+  createTrafficFine,
+  getDepositDetail,
+  listDeposits,
+  listTrafficFines,
+  readDepositDocument,
+  settleDeposit,
+} from '../database/services/depositService.ts';
+import {
+  createSupplier,
+  listExpenses,
+  listSuppliers,
+  readExpenseDocument,
+  recordExpense,
+  reverseExpense,
+} from '../database/services/expenseService.ts';
+import {
+  buildFinancialReportCsv,
+  getFinancialDashboardReports,
+  getVehicleFinanceSummary,
+  getVehicleProfitabilityReport,
+} from '../database/services/financeReportService.ts';
+import {
   archiveVehicle,
   createVehicle,
   createVehicleBlockedPeriod,
@@ -70,6 +116,12 @@ import {
   updateVehicle,
   upsertVehicleDocument,
 } from '../database/services/fleetService.ts';
+import {
+  getPaymentReceipt,
+  listPayments,
+  recordPayment,
+  reversePayment,
+} from '../database/services/paymentService.ts';
 import {
   calculateRentalPrice,
   createSeasonalRate,
@@ -156,6 +208,12 @@ export function createIpcHandlers(
       .get(userId);
     if (!row) return false;
     return resolveEffectivePermissions(db, userId, row.role_id).includes(perm);
+  };
+
+  const requireAnyPermission = (userId: number, perms: PermissionCode[]) => {
+    if (!perms.some((p) => hasLivePerm(userId, p))) {
+      throw new AuthError('FORBIDDEN', `Permission insuffisante (${perms.join(' | ')})`);
+    }
   };
 
   return {
@@ -549,6 +607,233 @@ export function createIpcHandlers(
         Number(env.data.contractId),
         String(env.data.reason || 'Annulation contrat')
       );
+    }),
+
+    // Phase 3: Financial Management
+    [IPC_CHANNELS.FINANCE_LIST_PAYMENTS]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['finance:read', 'finance:record_payment']);
+      return listPayments(db, env.data as any);
+    }),
+
+    [IPC_CHANNELS.FINANCE_RECORD_PAYMENT]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'finance:record_payment');
+      const parsed = RecordPaymentSchema.parse(env.data);
+      return recordPayment(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.FINANCE_REVERSE_PAYMENT]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'finance:approve_adjustment');
+      const parsed = ReversePaymentSchema.parse(env.data);
+      return reversePayment(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.FINANCE_GET_PAYMENT_RECEIPT]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, [
+        'finance:read',
+        'finance:record_payment',
+        'contracts:read',
+        'documents:generate',
+      ]);
+      return getPaymentReceipt(db, Number(env.data?.paymentId ?? env.data));
+    }),
+
+    [IPC_CHANNELS.FINANCE_LIST_DEPOSITS]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['finance:read', 'finance:manage_deposit']);
+      return listDeposits(db, env.data as any);
+    }),
+
+    [IPC_CHANNELS.FINANCE_GET_DEPOSIT_DETAIL]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['finance:read', 'finance:manage_deposit', 'contracts:read']);
+      return getDepositDetail(db, Number(env.data?.depositId ?? env.data));
+    }),
+
+    [IPC_CHANNELS.FINANCE_SETTLE_DEPOSIT]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'finance:manage_deposit');
+      if (!vault) throw new Error('Vault non configuré');
+      const parsed = SettleDepositSchema.parse(env.data);
+      return settleDeposit(
+        db,
+        { id: session.userId, username: session.username },
+        vault.vaultRootDir,
+        vault.vaultKey,
+        parsed
+      );
+    }),
+
+    [IPC_CHANNELS.FINANCE_READ_DEPOSIT_DOC]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['finance:read', 'finance:manage_deposit']);
+      if (!vault) throw new Error('Vault non configuré');
+      return readDepositDocument(
+        db,
+        vault.vaultRootDir,
+        vault.vaultKey,
+        Number(env.data?.depositId ?? env.data)
+      );
+    }),
+
+    [IPC_CHANNELS.FINANCE_LIST_FINES]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['finance:read', 'finance:manage_deposit']);
+      return listTrafficFines(db, env.data as any);
+    }),
+
+    [IPC_CHANNELS.FINANCE_CREATE_FINE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'finance:manage_deposit');
+      const parsed = CreateTrafficFineSchema.parse(env.data);
+      return createTrafficFine(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.FINANCE_CUSTOMER_ACCOUNTS]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['finance:read', 'reports:view', 'finance:approve_adjustment']);
+      return listCustomerFinancialAccounts(db, env.data as any);
+    }),
+
+    [IPC_CHANNELS.FINANCE_CUSTOMER_LEDGER]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, [
+        'finance:read',
+        'reports:view',
+        'finance:approve_adjustment',
+        'customers:read',
+      ]);
+      return getCustomerFinancialLedger(db, Number(env.data?.customerId ?? env.data));
+    }),
+
+    [IPC_CHANNELS.FINANCE_CREATE_CUSTOMER_ADJUSTMENT]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'finance:approve_adjustment');
+      const parsed = CreateCustomerAdjustmentSchema.parse(env.data);
+      return createCustomerAdjustment(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.FINANCE_LIST_SUPPLIERS]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['finance:read', 'finance:manage_expenses']);
+      return listSuppliers(db);
+    }),
+
+    [IPC_CHANNELS.FINANCE_CREATE_SUPPLIER]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'finance:manage_expenses');
+      const parsed = CreateSupplierSchema.parse(env.data);
+      return createSupplier(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.FINANCE_LIST_EXPENSES]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['finance:read', 'finance:manage_expenses']);
+      return listExpenses(db, env.data as any);
+    }),
+
+    [IPC_CHANNELS.FINANCE_RECORD_EXPENSE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'finance:manage_expenses');
+      if (!vault) throw new Error('Vault non configuré');
+      const parsed = CreateExpenseSchema.parse(env.data);
+      return recordExpense(
+        db,
+        { id: session.userId, username: session.username },
+        vault.vaultRootDir,
+        vault.vaultKey,
+        parsed
+      );
+    }),
+
+    [IPC_CHANNELS.FINANCE_REVERSE_EXPENSE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'finance:approve_adjustment');
+      const parsed = ReverseExpenseSchema.parse(env.data);
+      return reverseExpense(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.FINANCE_READ_EXPENSE_DOC]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['finance:read', 'finance:manage_expenses']);
+      if (!vault) throw new Error('Vault non configuré');
+      return readExpenseDocument(
+        db,
+        vault.vaultRootDir,
+        vault.vaultKey,
+        Number(env.data?.expenseId ?? env.data)
+      );
+    }),
+
+    [IPC_CHANNELS.FINANCE_CASH_SESSION_CURRENT]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['finance:read', 'finance:cash_register']);
+      return getCurrentCashSession(db);
+    }),
+
+    [IPC_CHANNELS.FINANCE_CASH_SESSION_LIST]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['finance:read', 'finance:cash_register']);
+      return listCashSessions(db, env.data?.limit ? Number(env.data.limit) : 90);
+    }),
+
+    [IPC_CHANNELS.FINANCE_CASH_SESSION_DETAIL]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['finance:read', 'finance:cash_register']);
+      return getCashSessionDetail(db, Number(env.data?.sessionId ?? env.data));
+    }),
+
+    [IPC_CHANNELS.FINANCE_CASH_SESSION_OPEN]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'finance:cash_register');
+      const parsed = OpenCashSessionSchema.parse(env.data);
+      return openCashSession(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.FINANCE_CASH_SESSION_CLOSE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'finance:cash_register');
+      const parsed = CloseCashSessionSchema.parse(env.data);
+      return closeCashSession(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.FINANCE_CASH_RECORD_ADJUSTMENT]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'finance:approve_adjustment');
+      const parsed = RecordCashAdjustmentSchema.parse(env.data);
+      return recordCashAdjustment(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.FINANCE_DASHBOARD_REPORTS]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['finance:read', 'reports:view']);
+      return getFinancialDashboardReports(db, env.data as any);
+    }),
+
+    [IPC_CHANNELS.FINANCE_VEHICLE_PROFITABILITY]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['finance:read', 'reports:view']);
+      return getVehicleProfitabilityReport(db, env.data as any);
+    }),
+
+    [IPC_CHANNELS.FINANCE_VEHICLE_SUMMARY]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['finance:read', 'finance:manage_expenses', 'reports:view']);
+      return getVehicleFinanceSummary(db, Number(env.data?.vehicleId ?? env.data));
+    }),
+
+    [IPC_CHANNELS.FINANCE_EXPORT_CSV]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['finance:read', 'reports:view']);
+      const report = getFinancialDashboardReports(db, env.data as any);
+      const lang = env.data?.lang === 'ar' ? 'ar' : 'fr';
+      return {
+        fileName: `rapport-financier-${report.dateFrom}_${report.dateTo}.csv`,
+        csvContent: buildFinancialReportCsv(report, lang),
+      };
     }),
   };
 }

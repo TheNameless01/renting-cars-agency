@@ -92,12 +92,40 @@ export const IPC_CHANNELS = {
   INSPECTIONS_CREATE: 'inspections:create',
   INSPECTIONS_GET_BY_CONTRACT: 'inspections:getByContract',
 
+  FINANCE_LIST_PAYMENTS: 'finance:listPayments',
   FINANCE_RECORD_PAYMENT: 'finance:recordPayment',
+  FINANCE_REVERSE_PAYMENT: 'finance:reversePayment',
+  FINANCE_GET_PAYMENT_RECEIPT: 'finance:getPaymentReceipt',
+
+  FINANCE_LIST_DEPOSITS: 'finance:listDeposits',
+  FINANCE_GET_DEPOSIT_DETAIL: 'finance:getDepositDetail',
   FINANCE_SETTLE_DEPOSIT: 'finance:settleDeposit',
+  FINANCE_READ_DEPOSIT_DOC: 'finance:readDepositDoc',
+  FINANCE_LIST_FINES: 'finance:listFines',
+  FINANCE_CREATE_FINE: 'finance:createFine',
+
+  FINANCE_CUSTOMER_ACCOUNTS: 'finance:customerAccounts',
+  FINANCE_CUSTOMER_LEDGER: 'finance:customerLedger',
+  FINANCE_CREATE_CUSTOMER_ADJUSTMENT: 'finance:createCustomerAdjustment',
+
+  FINANCE_LIST_SUPPLIERS: 'finance:listSuppliers',
+  FINANCE_CREATE_SUPPLIER: 'finance:createSupplier',
+  FINANCE_LIST_EXPENSES: 'finance:listExpenses',
   FINANCE_RECORD_EXPENSE: 'finance:recordExpense',
+  FINANCE_REVERSE_EXPENSE: 'finance:reverseExpense',
+  FINANCE_READ_EXPENSE_DOC: 'finance:readExpenseDoc',
+
   FINANCE_CASH_SESSION_CURRENT: 'finance:cashSessionCurrent',
+  FINANCE_CASH_SESSION_LIST: 'finance:cashSessionList',
+  FINANCE_CASH_SESSION_DETAIL: 'finance:cashSessionDetail',
   FINANCE_CASH_SESSION_OPEN: 'finance:cashSessionOpen',
   FINANCE_CASH_SESSION_CLOSE: 'finance:cashSessionClose',
+  FINANCE_CASH_RECORD_ADJUSTMENT: 'finance:cashRecordAdjustment',
+
+  FINANCE_DASHBOARD_REPORTS: 'finance:dashboardReports',
+  FINANCE_VEHICLE_PROFITABILITY: 'finance:vehicleProfitability',
+  FINANCE_VEHICLE_SUMMARY: 'finance:vehicleSummary',
+  FINANCE_EXPORT_CSV: 'finance:exportCsv',
 
   MAINTENANCE_LIST: 'maintenance:list',
   MAINTENANCE_CREATE: 'maintenance:create',
