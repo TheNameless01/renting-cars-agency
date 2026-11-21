@@ -1,0 +1,1638 @@
+# MASTER PROJECT PROMPT
+# ALGERIAN CAR RENTAL MANAGEMENT ERP
+## Gestion d'Agence de Location de Voitures | تسيير وكالة كراء السيارات
+
+---
+
+# 1. YOUR ROLE AND MISSION
+
+Act as a multidisciplinary senior software engineering team consisting of:
+
+- Senior Product Manager specializing in ERP systems.
+- Senior UI/UX Architect.
+- Senior React and TypeScript Engineer.
+- Senior Electron Desktop Application Engineer.
+- Database Architect specializing in SQLite.
+- Financial Systems Engineer.
+- Quality Assurance and Security Engineer.
+- Arabic/French Localization Specialist.
+- Algerian business software domain expert.
+
+Your mission is to design and build a professional, production-oriented, offline-first Windows desktop application for managing an Algerian car rental agency.
+
+This is not a dashboard demonstration, a landing page, or a static frontend prototype.
+
+Build a functional business management system with persistent data, real business logic, interconnected modules, reliable calculations, document generation, local backups, user permissions, and a professional interface.
+
+The application must work without an internet connection.
+
+Do not invent completed functionality. Do not use fake buttons, decorative statistics, nonfunctional forms, or mock actions presented as real operations.
+
+When something is not implemented, clearly identify it.
+
+# 2. PROJECT IDENTITY
+
+Product name:
+Gestion Agence de Location
+
+Arabic name:
+تسيير وكالة كراء السيارات
+
+Target market:
+Algeria.
+
+Agency legal status:
+Personne physique.
+
+Operating model:
+One physical agency, one computer, one location.
+
+Users:
+- Administrator (Admin).
+- Rental Agent (Agent).
+
+Fleet:
+Passenger cars only.
+
+Growth:
+The application must support a small initial fleet and scale to at least 100 vehicles without architectural redesign.
+
+Primary currency:
+Algerian Dinar (DZD / DA).
+
+Default language:
+French.
+
+Secondary language:
+Arabic.
+
+Documents:
+Bilingual Arabic/French.
+
+Operating systems:
+Windows 10 and Windows 11, with Windows 11 preferred.
+
+Connectivity:
+Fully offline. No internet connection required for normal operations.
+
+# 3. TECHNOLOGY ARCHITECTURE
+
+Use the following architecture unless a genuine technical incompatibility requires a documented alternative.
+
+Frontend:
+- React.
+- TypeScript.
+- Vite.
+- Tailwind CSS.
+- shadcn/ui or equivalent accessible component system.
+- Lucide icons.
+- React Router.
+- React Hook Form.
+- Zod validation.
+
+Desktop:
+- Electron.
+- Secure Electron main process.
+- Preload script.
+- Context isolation enabled.
+- Node integration disabled in renderer.
+- Explicit IPC contracts.
+- Electron Builder for Windows packaging.
+
+Database:
+- SQLite.
+- Relational database structure.
+- Foreign keys enabled.
+- Database migrations.
+- Transactions for financial and contractual operations.
+- Proper indexes.
+- Prepared statements.
+- Referential integrity.
+
+Database access:
+All database operations must occur in the Electron main process or an appropriately isolated backend layer.
+
+The React renderer must never access SQLite directly.
+
+Use a repository/service architecture to separate:
+- UI components.
+- Business logic.
+- Database operations.
+- Document generation.
+- File management.
+- Authentication and permissions.
+
+Avoid putting all application logic into one file.
+
+Use a modular, maintainable folder structure.
+
+Recommended structure:
+
+src/
+  components/
+  pages/
+  layouts/
+  features/
+    dashboard/
+    vehicles/
+    customers/
+    rentals/
+    inspections/
+    finance/
+    maintenance/
+    inventory/
+    documents/
+    reports/
+    settings/
+  hooks/
+  i18n/
+  lib/
+  types/
+
+electron/
+  main/
+  preload/
+  database/
+    migrations/
+    repositories/
+    services/
+  security/
+  backups/
+  documents/
+  ipc/
+
+shared/
+  schemas/
+  types/
+  constants/
+
+Do not use browser LocalStorage as the primary database.
+
+Use SQLite for all business records.
+
+# 4. NON-NEGOTIABLE DEVELOPMENT RULES
+
+1. Build functional features, not visual mockups.
+2. Persist all important data in SQLite.
+3. Never use fake sample statistics as live business data.
+4. Seed demonstration data only in an explicitly identified demo mode.
+5. Never hardcode business prices or administrative rules.
+6. Make business rules configurable through settings.
+7. Never silently delete financial transactions.
+8. Preserve contract and transaction history.
+9. Use database transactions for operations involving multiple records.
+10. Validate inputs on both frontend and backend.
+11. Prevent duplicate vehicle rentals.
+12. Prevent negative or inconsistent financial balances.
+13. Protect customer identity documents.
+14. Make backups restorable, not just downloadable.
+15. Test Arabic and French interfaces separately.
+16. Do not sacrifice functionality for animations.
+17. Do not introduce cloud dependencies.
+18. Never claim a feature works unless its implementation and tests support that claim.
+
+When requirements are ambiguous, implement the safest configurable behavior and document the assumption.
+
+# 5. DESIGN SYSTEM AND USER EXPERIENCE
+
+Create an elegant enterprise ERP interface.
+
+Visual direction:
+- Professional.
+- Modern.
+- Clean.
+- Information-dense but readable.
+- Automotive business identity.
+- Consistent spacing.
+- Strong visual hierarchy.
+- Minimal unnecessary decoration.
+
+Do not create a generic colorful SaaS dashboard.
+
+Use a professional palette with:
+- Neutral backgrounds.
+- White or dark surfaces.
+- Navy/blue primary accents.
+- Green for successful operations.
+- Amber for warnings.
+- Red for critical alerts.
+- Subtle borders and shadows.
+
+Provide two themes:
+- Light.
+- Dark.
+
+Allow users to switch themes.
+
+## Main application layout
+
+Desktop layout:
+
+Sidebar:
+- Navigation.
+- Module icons.
+- Active section indicator.
+- Collapsible navigation.
+
+Top bar:
+- Page title.
+- Global search.
+- Notification center.
+- Current user.
+- Language selector.
+- Theme selector.
+
+Main content:
+- Contextual page actions.
+- Summary indicators.
+- Tables.
+- Forms.
+- Charts when useful.
+- Empty states.
+- Loading states.
+- Error states.
+
+Use confirmation dialogs for dangerous actions.
+
+Use toast notifications for successful and failed operations.
+
+Provide useful keyboard navigation and shortcuts.
+
+Make the interface comfortable on 1366x768 and larger screens.
+
+Avoid excessive nested modals.
+
+Use drawers or dedicated pages for complex editing.
+
+# 6. STRICT ARABIC AND FRENCH LOCALIZATION
+
+This requirement is extremely important.
+
+The entire application must support two complete languages.
+
+French:
+- Default language.
+- LTR direction.
+- French business terminology.
+
+Arabic:
+- RTL direction.
+- Proper Arabic typography.
+- Correct alignment.
+- Mirrored directional icons where appropriate.
+- Correct navigation order.
+- Proper Arabic table layout.
+- Correct input alignment.
+
+Language switching must update the entire application immediately without reloading or losing unsaved work.
+
+Use a centralized translation system.
+
+Never scatter translated strings throughout components.
+
+Never translate database field names.
+
+Use stable language-independent identifiers.
+
+Support:
+- French dates.
+- Arabic language dates.
+- DZD currency formatting.
+- Arabic and Latin numerals as configurable display preferences.
+
+Store dates consistently in the database using ISO-compatible formats.
+
+Do not assume that every Arabic interface element should be mirrored. Non-directional symbols, logos, vehicle images and numeric identifiers should remain correctly oriented.
+
+Arabic typography:
+Use a suitable bundled Arabic font such as Noto Sans Arabic or Cairo.
+
+Ensure PDF generation embeds appropriate Arabic fonts and correctly shapes Arabic characters.
+
+# 7. APPLICATION NAVIGATION
+
+Create these main modules:
+
+1. Dashboard.
+2. Fleet Management.
+3. Rental Planning.
+4. Customers.
+5. Rental Contracts.
+6. Vehicle Inspections.
+7. Finance.
+8. Maintenance.
+9. Spare Parts Inventory.
+10. Documents.
+11. Reports.
+12. Users and Settings.
+
+Every module must be connected to the same persistent database.
+
+# 8. MODULE 1 — DASHBOARD
+
+Create a real operational dashboard.
+
+Display:
+
+Fleet:
+- Total vehicles.
+- Available vehicles.
+- Rented vehicles.
+- Reserved vehicles.
+- Vehicles in maintenance.
+
+Rentals:
+- Active contracts.
+- Vehicles returning today.
+- Overdue vehicles.
+- Upcoming reservations.
+
+Financials:
+- Revenue today.
+- Revenue this month.
+- Recorded expenses.
+- Outstanding customer balances.
+- Security deposits currently held.
+- Net operating result.
+
+Alerts:
+- Expiring insurance.
+- Expiring technical inspections.
+- Vignette deadlines.
+- Upcoming oil changes.
+- Other maintenance deadlines.
+- Overdue vehicle returns.
+- Customers with outstanding debts.
+
+Use database-derived statistics.
+
+Do not calculate revenue by adding security deposits.
+
+Include quick actions:
+- New rental.
+- New customer.
+- Add vehicle.
+- Record payment.
+- Record expense.
+- Register maintenance.
+
+Dashboard cards must open the relevant filtered module when clicked.
+
+Provide date-range filters for financial indicators.
+
+# 9. MODULE 2 — FLEET MANAGEMENT
+
+Create a complete vehicle management system.
+
+Each vehicle must have:
+
+Identification:
+- Internal vehicle ID.
+- Algerian registration number (Matricule).
+- VIN / Numéro de châssis.
+- Brand.
+- Model.
+- Year.
+- Color.
+- Vehicle category.
+- Fuel type.
+- Transmission.
+- Number of seats.
+- Current odometer.
+- Acquisition date.
+- Acquisition cost, if applicable.
+
+Fuel types:
+- Essence.
+- Diesel.
+- GPL.
+- Other.
+
+Administrative records:
+- Carte grise.
+- Assurance.
+- Vignette.
+- Contrôle technique.
+
+For each administrative document:
+- Document number where applicable.
+- Issue date.
+- Expiration date.
+- Reminder threshold.
+- Supporting document attachment.
+
+Vehicle status:
+- Available.
+- Rented.
+- Reserved.
+- Maintenance.
+
+Status must be derived or validated against active reservations, contracts and maintenance records.
+
+Do not allow a user to manually mark a vehicle available if an active rental still exists.
+
+Vehicle profile tabs:
+
+1. General information.
+2. Administrative documents.
+3. Rental history.
+4. Maintenance history.
+5. Expenses.
+6. Photos.
+7. Documents.
+8. Financial performance.
+
+Show complete vehicle history.
+
+Algerian registration number example:
+00123-124-16.
+
+Validate its format while allowing authorized configuration for other valid registration formats.
+
+Provide search, sorting and filtering.
+
+# 10. MODULE 3 — RENTAL PLANNING
+
+Create a visual vehicle availability calendar.
+
+Views:
+- Day.
+- Week.
+- Month.
+
+Display rental periods for each vehicle.
+
+Show:
+- Customer.
+- Vehicle.
+- Start date.
+- Expected return.
+- Actual return.
+- Reservation status.
+
+Use distinguishable colors for:
+- Available.
+- Reserved.
+- Rented.
+- Maintenance.
+
+Prevent overlapping active rental periods.
+
+Support advance reservations even though the normal business workflow starts with walk-in customers.
+
+Check availability before confirming a contract.
+
+The calendar must update automatically when:
+- A reservation is created.
+- A rental is confirmed.
+- A contract is extended.
+- A rental is closed.
+- A vehicle enters maintenance.
+
+# 11. MODULE 4 — CUSTOMER MANAGEMENT
+
+Support two customer types.
+
+A. Individuals (Particuliers)
+
+Fields:
+- Full name.
+- Date of birth, if required by agency policy.
+- Phone.
+- Secondary phone.
+- Address.
+- Wilaya.
+- Commune.
+- CNI number.
+- Passport number.
+- Driving licence number.
+- Driving licence issue date.
+- Driving licence expiration date.
+- Document images.
+- Internal notes.
+
+B. Companies (Entreprises)
+
+Fields:
+- Company name.
+- Legal representative.
+- Phone.
+- Address.
+- RC.
+- NIF.
+- NIS.
+- ART, when applicable.
+- Bon de commande.
+- Supporting documents.
+
+Customer profile:
+
+Display:
+- Complete rental history.
+- Total rentals.
+- Outstanding debt.
+- Payment history.
+- Deposit history.
+- Fines.
+- Damage incidents.
+- Late returns.
+- Internal notes.
+
+## Customer risk management
+
+Implement a blacklist and reliability management system.
+
+Risk reasons:
+- Unpaid debt.
+- Traffic fines.
+- Radar fines.
+- Vehicle damage.
+- Late return.
+- Contract violations.
+- Other documented incidents.
+
+Support:
+- Risk level.
+- Reason.
+- Description.
+- Date.
+- Supporting evidence.
+- Responsible employee.
+- Resolution status.
+
+Show a warning before creating a contract for a flagged customer.
+
+Allow the administrator to authorize an exception with a recorded reason.
+
+Do not automatically blacklist a customer based only on an unverified accusation.
+
+Driving licence eligibility must be configurable.
+
+Support the agency's two-year minimum rule as a configurable default, not an assumed universal legal conclusion.
+
+# 12. MODULE 5 — RENTAL CONTRACTS
+
+This is the central business module.
+
+Create a guided rental workflow.
+
+Step 1:
+Select an existing customer or create a new customer.
+
+Step 2:
+Select an available vehicle.
+
+Step 3:
+Select rental start and end dates.
+
+Step 4:
+Configure pricing.
+
+Step 5:
+Calculate deposit.
+
+Step 6:
+Review contract conditions.
+
+Step 7:
+Record initial payment.
+
+Step 8:
+Generate bilingual contract.
+
+Step 9:
+Perform departure inspection.
+
+Step 10:
+Confirm vehicle handover.
+
+## Pricing engine
+
+Support:
+
+- Daily rates.
+- Weekly rates.
+- Monthly rates.
+- Seasonal rates.
+- Vehicle-specific prices.
+- Custom contract prices.
+- Customer-specific discounts.
+- Fixed discounts.
+- Percentage discounts.
+
+Pricing must be configurable.
+
+Show the price calculation transparently.
+
+Do not silently apply discounts.
+
+## Mileage rules
+
+Support:
+- Unlimited mileage.
+- Daily mileage allowance.
+- Custom contract allowance.
+- Total included kilometres.
+- Extra kilometre rate.
+
+Calculate extra kilometre charges using actual departure and return readings.
+
+Formula:
+
+Extra kilometres =
+Maximum(0, Actual kilometres driven - Included kilometres).
+
+Extra kilometre charge =
+Extra kilometres × Configured rate.
+
+## Late return rules
+
+Support:
+- Configurable grace period.
+- Hourly late return fee.
+- Daily late return fee.
+- Custom penalty.
+- Manual authorized adjustment.
+
+Calculate late fees based on actual return time.
+
+Show the calculation to the user before settlement.
+
+## Security deposit
+
+Support custom deposit amount per contract.
+
+Currencies:
+- DZD.
+- EUR, only when the agency's legal and operational rules permit it.
+
+Statuses:
+- Held.
+- Returned.
+- Partially deducted.
+- Fully deducted.
+
+Record:
+- Deposit amount.
+- Currency.
+- Date received.
+- Return date.
+- Deducted amount.
+- Deduction reason.
+- Refund amount.
+- Employee.
+- Supporting documents.
+
+A deposit must never automatically count as rental revenue.
+
+## Contract lifecycle
+
+Statuses:
+- Draft.
+- Confirmed.
+- Active.
+- Extended.
+- Completed.
+- Cancelled.
+
+Preserve the original contract information when extending.
+
+## Contract extension workflow
+
+The selected business rule is to extend the existing contract.
+
+When extending:
+1. Open the active contract.
+2. Enter the new return date.
+3. Check availability.
+4. Check for conflicts.
+5. Recalculate the additional rental amount.
+6. Recalculate mileage allowance when applicable.
+7. Record additional payment or debt.
+8. Create an extension history record.
+9. Preserve the original terms.
+10. Update the expected return date.
+
+Keep every extension traceable.
+
+# 13. MODULE 6 — VEHICLE INSPECTIONS
+
+Implement a complete vehicle inspection system (État des lieux).
+
+Two mandatory inspection stages:
+
+A. Departure inspection.
+
+B. Return inspection.
+
+Record:
+
+- Odometer reading.
+- Fuel level.
+- Exterior condition.
+- Interior condition.
+- Existing scratches.
+- Dents.
+- Broken parts.
+- Tires.
+- Spare tire.
+- Jack.
+- Warning triangle.
+- Vehicle documents.
+- Keys.
+- Other accessories.
+
+Support configurable checklists.
+
+Each inspection item must support:
+- Good condition.
+- Damaged.
+- Missing.
+- Notes.
+
+Allow photos to be attached.
+
+Show differences between departure and return inspections.
+
+Identify newly reported damage.
+
+Allow signatures from:
+- Agency representative.
+- Customer.
+
+Generate a printable inspection report.
+
+The inspection must be linked to its rental contract and vehicle.
+
+# 14. MODULE 7 — FINANCIAL MANAGEMENT
+
+Build a proper financial subsystem.
+
+Never treat the following as the same thing:
+
+1. Rental revenue.
+2. Security deposits.
+3. Customer debts.
+4. Expenses.
+5. Refunds.
+
+## Payment management
+
+Selected primary payment method:
+Cash in DZD.
+
+Also support recording payment references for:
+- CCP.
+- BaridiMob.
+- Bank transfer.
+- Other methods.
+
+These additional methods should be configurable.
+
+Payment fields:
+- Transaction ID.
+- Date.
+- Amount.
+- Currency.
+- Method.
+- Related contract.
+- Customer.
+- Employee.
+- Description.
+- Receipt number.
+
+Support:
+- Partial payments.
+- Multiple payments.
+- Refunds.
+- Outstanding balances.
+- Manual adjustments with authorization.
+
+## Customer balance
+
+Calculate:
+
+Outstanding balance =
+Rental charges + penalties + other agreed charges
+- payments received
+- valid credits and adjustments.
+
+Do not subtract the security deposit as if it were a rental payment.
+
+A deposit deduction may settle an eligible charge only when explicitly recorded and authorized.
+
+## Cash register
+
+Implement a daily cash register.
+
+Fields:
+- Opening balance.
+- Cash received.
+- Cash refunded.
+- Cash expenses.
+- Closing balance.
+- Responsible employee.
+
+Calculate expected closing balance.
+
+Provide a cash reconciliation screen.
+
+Never allow silent modifications of closed cash records.
+
+## Expenses
+
+Expense categories:
+- Maintenance.
+- Repairs.
+- Spare parts.
+- Insurance.
+- Vignette.
+- Technical inspection.
+- Cleaning.
+- Administrative.
+- Other.
+
+Each expense may be linked to:
+- Vehicle.
+- Supplier.
+- Maintenance job.
+- Date.
+- Receipt attachment.
+
+## Vehicle profitability
+
+Calculate:
+
+Recorded rental revenue.
+Minus recorded operating expenses.
+
+Display:
+- Revenue per vehicle.
+- Expenses per vehicle.
+- Recorded operating result.
+- Rental utilization.
+- Maintenance costs.
+
+Clearly label the result as recorded operating profitability, not complete accounting profit or ROI when depreciation, taxes and other costs are unavailable.
+
+# 15. MODULE 8 — DOCUMENT GENERATION
+
+Generate professional printable documents.
+
+Required:
+
+1. Rental contract.
+2. Departure inspection report.
+3. Return inspection report.
+4. Invoice / Facture.
+5. Payment receipt.
+6. Deposit receipt.
+
+Formats:
+- A4 PDF.
+- 58mm thermal receipt.
+- 80mm thermal receipt.
+
+The PDF system must support Arabic and French.
+
+Bilingual contracts must display both languages clearly.
+
+Include:
+- Agency identity.
+- Agency legal information.
+- Customer details.
+- Vehicle information.
+- Registration number.
+- Rental dates.
+- Pricing.
+- Deposit.
+- Mileage rules.
+- Penalties.
+- Responsibilities.
+- Inspection references.
+- Signature fields.
+- Document number.
+- Issue date.
+
+Provide configurable agency information.
+
+Allow the user to preview documents before printing.
+
+Use appropriate Arabic fonts and correct text shaping.
+
+Do not create an invoice and label it legally compliant unless its required fiscal information has been configured and validated.
+
+Store generated documents locally.
+
+Support reprinting without duplicating the underlying transaction.
+
+WhatsApp:
+Provide a way to export the generated PDF and manually share it when internet is available.
+
+Do not claim WhatsApp sending works offline.
+
+# 16. MODULE 9 — MAINTENANCE MANAGEMENT
+
+Create a complete maintenance management system.
+
+Track:
+
+- Current odometer.
+- Last maintenance date.
+- Last maintenance mileage.
+- Next maintenance date.
+- Next maintenance mileage.
+
+Maintenance categories:
+
+- Vidange.
+- Oil filter.
+- Air filter.
+- Fuel filter.
+- Timing belt.
+- Tires.
+- Brake pads.
+- Brake discs.
+- Battery.
+- General repairs.
+- Other.
+
+Allow each maintenance type to have:
+- Date interval.
+- Mileage interval.
+- Both intervals.
+- Configurable warning threshold.
+
+Example:
+
+Oil change:
+- Every 7,000 km or 10,000 km, configurable.
+- Date-based reminder where applicable.
+
+The next maintenance becomes due when either configured condition is reached.
+
+Generate alerts for:
+- Due soon.
+- Due now.
+- Overdue.
+
+Create maintenance records containing:
+- Vehicle.
+- Work description.
+- Date.
+- Odometer.
+- Parts used.
+- Labor cost.
+- Parts cost.
+- Total expense.
+- Supplier or garage.
+- Invoice attachment.
+- Employee.
+
+Maintenance status should prevent a vehicle from being rented when it is explicitly unavailable.
+
+# 17. MODULE 10 — SPARE PARTS INVENTORY
+
+Build a functional inventory module.
+
+Track:
+
+- Part name.
+- Part code.
+- Category.
+- Description.
+- Quantity available.
+- Minimum stock.
+- Unit purchase price.
+- Supplier.
+- Purchase date.
+- Storage location.
+
+Support:
+- Stock purchases.
+- Stock entries.
+- Stock withdrawals.
+- Stock adjustments.
+- Parts used for maintenance.
+- Inventory history.
+
+Every stock movement must have:
+- Movement ID.
+- Date.
+- Type.
+- Quantity.
+- Related maintenance record, when applicable.
+- Employee.
+- Notes.
+
+Prevent negative inventory unless an administrator explicitly authorizes an adjustment.
+
+Show low-stock alerts.
+
+When a part is used in maintenance:
+- Deduct the quantity.
+- Record the movement.
+- Include the cost in the associated maintenance expense.
+- Preserve the stock history.
+
+# 18. MODULE 11 — REPORTS AND ANALYTICS
+
+Generate reports based on actual database records.
+
+Reports:
+
+Financial:
+- Daily revenue.
+- Monthly revenue.
+- Expenses.
+- Outstanding balances.
+- Deposits held.
+- Refunds.
+- Cash register summaries.
+
+Fleet:
+- Vehicle utilization.
+- Rental days.
+- Maintenance costs.
+- Recorded profitability.
+- Availability.
+
+Customers:
+- Rental history.
+- Outstanding balances.
+- Risk incidents.
+
+Maintenance:
+- Upcoming maintenance.
+- Overdue maintenance.
+- Maintenance expense per vehicle.
+- Parts consumption.
+
+Support:
+- Date filters.
+- Vehicle filters.
+- Customer filters.
+- PDF export.
+- CSV/Excel export.
+
+Never present estimated values as actual financial results.
+
+# 19. MODULE 12 — USERS AND PERMISSIONS
+
+Implement local user authentication.
+
+Roles:
+
+ADMIN:
+- Full access.
+- Create and manage users.
+- Configure business settings.
+- Manage vehicles.
+- Manage customers.
+- Manage contracts.
+- Manage finance.
+- Approve financial adjustments.
+- View all reports.
+- Manage backups.
+- Restore data.
+- View audit logs.
+
+AGENT:
+- Create and update customers.
+- View vehicle availability.
+- Create rental contracts.
+- Perform inspections.
+- Record permitted payments.
+- Generate documents.
+- View assigned operational information.
+
+Restrict:
+- Financial configuration.
+- User management.
+- Destructive operations.
+- Data restoration.
+- High-risk overrides.
+
+Permissions must be enforced in the backend, not merely by hiding frontend buttons.
+
+## Authentication
+
+Use securely hashed passwords.
+
+Implement:
+- Login.
+- Logout.
+- Password changes.
+- Session management.
+- Failed login protection.
+
+Do not store plaintext passwords.
+
+Protect sensitive customer documents.
+
+Provide local application lock behavior.
+
+# 20. MODULE 13 — AUDIT LOGS
+
+Record important operations:
+
+- Vehicle created or modified.
+- Customer created or modified.
+- Contract created.
+- Contract extended.
+- Contract cancelled.
+- Payment recorded.
+- Deposit received.
+- Deposit refunded.
+- Deposit deducted.
+- Expense recorded.
+- Maintenance completed.
+- Inventory movement.
+- Permission change.
+- Backup and restoration.
+- Financial adjustment.
+
+Each audit event:
+- User.
+- Timestamp.
+- Operation.
+- Related entity.
+- Previous value where appropriate.
+- New value where appropriate.
+- Reason for sensitive changes.
+
+Audit records must not be editable by ordinary users.
+
+Do not silently erase historical financial operations.
+
+Use reversal transactions or explicit correction records.
+
+# 21. MODULE 14 — ALERTS AND NOTIFICATIONS
+
+Create a centralized notification system.
+
+Alerts:
+- Insurance expiring.
+- Vignette expiring.
+- Technical inspection expiring.
+- Rental due today.
+- Overdue vehicle.
+- Maintenance due.
+- Low spare-parts stock.
+- Customer debt.
+- Unresolved damage.
+- Backup failure.
+
+Provide:
+- Severity.
+- Date.
+- Related vehicle/customer/contract.
+- Read/unread state.
+- Resolution state.
+
+Use configurable alert thresholds.
+
+# 22. MODULE 15 — SETTINGS
+
+Create comprehensive settings pages.
+
+Agency:
+- Agency name.
+- Commercial name.
+- Address.
+- Wilaya.
+- Commune.
+- Phone.
+- Email.
+- NIF, RC and other applicable details.
+- Logo.
+- Signature information.
+
+Business:
+- Default currency.
+- Default daily rates.
+- Weekly/monthly pricing rules.
+- Default mileage allowance.
+- Extra kilometre rate.
+- Deposit defaults.
+- Late return policy.
+- Grace period.
+- Licence eligibility.
+- Discount limits.
+
+Documents:
+- Contract template.
+- Invoice template.
+- Receipt template.
+- Arabic/French formatting.
+- Signature configuration.
+
+Application:
+- Default language.
+- Theme.
+- Date format.
+- Number format.
+- Arabic numeral preference.
+- Backup configuration.
+- Storage location.
+
+All important business settings must be editable without changing source code.
+
+# 23. DATABASE DESIGN
+
+Create a normalized relational SQLite database.
+
+At minimum, include these entities:
+
+- users
+- roles
+- permissions
+- user_permissions
+- vehicles
+- vehicle_documents
+- vehicle_photos
+- customers
+- customer_documents
+- customer_companies
+- customer_risk_records
+- reservations
+- rental_contracts
+- rental_extensions
+- contract_pricing_items
+- contract_payments
+- deposits
+- deposit_movements
+- vehicle_inspections
+- inspection_items
+- inspection_photos
+- traffic_fines
+- maintenance_types
+- maintenance_records
+- maintenance_parts
+- inventory_parts
+- inventory_movements
+- suppliers
+- expenses
+- cash_register_sessions
+- cash_register_movements
+- invoices
+- generated_documents
+- notifications
+- audit_logs
+- application_settings
+- backup_records
+
+Use:
+- Primary keys.
+- Foreign keys.
+- Unique constraints where appropriate.
+- Indexes for frequent searches.
+- Created and updated timestamps.
+- Soft deletion where historical integrity requires it.
+
+Use decimal-safe monetary calculations. Do not rely on floating-point arithmetic for financial totals. Store monetary values in integer minor units or another explicitly documented exact representation.
+
+Never delete a customer or vehicle that is referenced by historical contracts.
+
+# 24. BACKUP AND RESTORATION
+
+The system must work without cloud storage.
+
+Implement:
+
+Automatic daily backups:
+- Configurable backup time.
+- Backup destination.
+- Backup success/failure notifications.
+- Retention policy.
+- Backup history.
+
+Manual backup:
+- User selects destination.
+- Generate a consistent database backup.
+- Include required local attachments.
+- Record backup timestamp.
+
+Restoration:
+- Admin-only operation.
+- Validate backup integrity.
+- Warn before overwriting current data.
+- Create a safety backup before restoration.
+- Restore database and linked files consistently.
+
+Use SQLite's backup API or another safe consistent backup strategy.
+
+Do not copy an active database file blindly while transactions are occurring.
+
+# 25. DATA PROTECTION
+
+Protect:
+- CNI images.
+- Passport images.
+- Driving licences.
+- Company documents.
+- Contract files.
+- Customer personal information.
+
+Use:
+- Secure local file storage.
+- Strict access permissions.
+- Safe filenames.
+- File validation.
+- Encryption for sensitive stored files where feasible.
+- Secure handling of encryption keys.
+- Protection against path traversal.
+- No unnecessary external transmission.
+
+Do not store customer documents in publicly accessible application folders.
+
+# 26. BUSINESS VALIDATION RULES
+
+Implement these validations:
+
+1. A vehicle cannot have overlapping active rentals.
+2. A vehicle in maintenance cannot be rented.
+3. An unavailable vehicle cannot be confirmed for rental.
+4. Customer eligibility must be checked before contract confirmation.
+5. Blacklisted customers require an authorized override.
+6. Deposit and rental payment must remain separate.
+7. A refund cannot exceed the eligible refundable amount.
+8. Extra mileage cannot be negative.
+9. Return odometer cannot be lower than departure odometer without an authorized correction.
+10. Rental extensions must preserve their original contract history.
+11. Payments cannot silently disappear after contract modification.
+12. Expenses must have valid amounts and dates.
+13. Inventory withdrawals cannot create negative quantities without authorized override.
+14. Closed cash sessions cannot be silently modified.
+15. All financial adjustments must be traceable.
+16. Documents must have unique identifiers.
+17. Historical contract records must remain available.
+18. All date and time calculations must use a consistent local timezone, initially Africa/Algiers.
+19. Vehicle administrative expiration must generate alerts.
+20. Maintenance must support both date and mileage triggers.
+
+# 27. USER EXPERIENCE WORKFLOWS
+
+Prioritize these daily actions:
+
+- Create a new rental.
+- Register a new customer.
+- Check vehicle availability.
+- Record a payment.
+- Extend a rental.
+- Return a vehicle.
+- Record damage.
+- Print a contract.
+- Register maintenance.
+- Receive spare parts.
+- Check outstanding debts.
+
+Make common operations accessible in as few steps as practical.
+
+Use intelligent defaults.
+
+Never force the user to fill in unnecessary fields.
+
+Clearly distinguish required fields from optional fields.
+
+Use French business terminology by default.
+
+# 28. TESTING REQUIREMENTS
+
+Create automated tests.
+
+Unit tests:
+- Pricing calculations.
+- Discounts.
+- Deposit calculations.
+- Mileage calculations.
+- Late return penalties.
+- Customer balances.
+- Cash register reconciliation.
+- Maintenance alerts.
+- Inventory movements.
+
+Integration tests:
+- Create customer.
+- Create vehicle.
+- Create rental.
+- Receive payment.
+- Extend rental.
+- Return vehicle.
+- Settle deposit.
+- Generate documents.
+- Record maintenance.
+- Deduct spare parts.
+- Backup and restore.
+
+Security tests:
+- Unauthorized financial operations.
+- Invalid permissions.
+- Malformed IPC requests.
+- SQL injection.
+- File path traversal.
+- Sensitive file access.
+
+End-to-end tests:
+Complete rental lifecycle from customer registration to contract closure.
+
+Localization tests:
+- French LTR.
+- Arabic RTL.
+- Mixed Arabic/French content.
+- Arabic PDF generation.
+- Long customer names.
+- Arabic and Latin numerals.
+
+# 29. ACCEPTANCE CRITERIA
+
+The application is not considered complete until:
+
+1. It installs and opens on the target Windows versions.
+2. It works with the internet disconnected.
+3. It saves records persistently.
+4. It survives application restarts.
+5. It correctly manages vehicles and availability.
+6. It prevents conflicting rentals.
+7. It creates real rental contracts.
+8. It correctly calculates pricing.
+9. It records payments separately from deposits.
+10. It correctly manages contract extensions.
+11. It handles vehicle returns and inspections.
+12. It generates usable bilingual PDFs.
+13. It tracks maintenance by date and mileage.
+14. It tracks spare-parts inventory.
+15. It produces correct financial summaries.
+16. It enforces Admin and Agent permissions.
+17. It produces restorable backups.
+18. It records sensitive operations in audit logs.
+19. It supports complete French and Arabic interfaces.
+20. It does not contain fake functionality.
+
+# 30. DEVELOPMENT EXECUTION STRATEGY
+
+IMPORTANT:
+
+Do not attempt to generate the entire ERP in one enormous uncontrolled code-generation operation.
+
+Develop incrementally while maintaining one consistent architecture.
+
+PHASE 0 — ARCHITECTURE
+
+Before coding:
+- Analyze all requirements.
+- Define architecture.
+- Define database schema.
+- Define folder structure.
+- Define IPC contracts.
+- Define shared types.
+- Define design system.
+- Identify technical risks.
+- Identify dependencies.
+- Produce an implementation plan.
+
+Do not skip this stage.
+
+PHASE 1 — FOUNDATION
+
+Build:
+- Electron desktop foundation.
+- React frontend.
+- SQLite connection.
+- Database migrations.
+- Authentication.
+- Admin/Agent permissions.
+- Main navigation.
+- French/Arabic localization.
+- RTL/LTR.
+- Light/dark themes.
+- Application settings.
+
+PHASE 2 — CORE BUSINESS
+
+Build:
+- Fleet management.
+- Customer management.
+- Rental calendar.
+- Availability engine.
+- Rental contracts.
+- Pricing engine.
+- Contract extensions.
+
+PHASE 3 — FINANCIAL SYSTEM
+
+Build:
+- Payments.
+- Deposits.
+- Refunds.
+- Customer debts.
+- Expenses.
+- Cash register.
+- Financial calculations.
+
+PHASE 4 — VEHICLE OPERATIONS
+
+Build:
+- Departure inspections.
+- Return inspections.
+- Damage records.
+- Maintenance.
+- Administrative alerts.
+- Spare-parts inventory.
+
+PHASE 5 — DOCUMENTS AND REPORTING
+
+Build:
+- Bilingual PDFs.
+- Thermal receipts.
+- Invoices.
+- Inspection documents.
+- Financial reports.
+- Vehicle reports.
+- CSV/Excel exports.
+
+PHASE 6 — HARDENING AND DELIVERY
+
+Build and test:
+- Audit logging.
+- Backup and restoration.
+- Data protection.
+- Error handling.
+- Performance.
+- Offline behavior.
+- Windows packaging.
+- Installer.
+- Application icon.
+- Installation and user documentation.
+
+After each phase:
+1. Review the implementation.
+2. Run tests.
+3. Identify missing functionality.
+4. Fix errors.
+5. Verify integration with existing modules.
+6. Update technical documentation.
+7. Confirm the phase is complete before proceeding.
+
+Do not regenerate working files unnecessarily.
+
+Preserve the existing architecture and data.
+
+# 31. GOOGLE AI STUDIO WORKING INSTRUCTIONS
+
+You are expected to create actual project files and functional implementation.
+
+Do not respond with only theoretical explanations or code snippets when you can create the project.
+
+First inspect the available development environment and supported capabilities.
+
+If the environment cannot execute or package Electron applications directly:
+- Build the actual source project.
+- Include Electron configuration.
+- Include package scripts.
+- Include database migrations.
+- Include all required source files.
+- Provide exact local build and installation instructions.
+- Never pretend that an installer was successfully produced.
+
+Do not replace the required desktop architecture with a browser-only application without explicit approval.
+
+If you encounter a technical limitation:
+1. Explain it.
+2. Identify the affected feature.
+3. Propose the smallest viable alternative.
+4. Preserve the core offline-first architecture.
+
+Maintain a DEVELOPMENT_STATUS.md file containing:
+- Completed features.
+- Incomplete features.
+- Known bugs.
+- Tests performed.
+- Build status.
+- Next implementation phase.
+
+Maintain a DATABASE_SCHEMA.md file.
+
+Maintain a USER_GUIDE.md file in French, with Arabic instructions where practical.
+
+# 32. FIRST RESPONSE REQUIRED
+
+Before writing application code, respond with:
+
+1. Your understanding of the product.
+2. Proposed technical architecture.
+3. Database entity relationships.
+4. Main application screen map.
+5. Development phases.
+6. Potential technical risks.
+7. Any genuine blocking questions.
+
+Then begin Phase 0.
+
+Do not ask questions already answered in this specification.
+
+Do not generate a generic dashboard and declare the project complete.
+
+The ultimate objective is a dependable, professional Algerian car rental ERP that an actual agency can use every day to manage its vehicles, customers, contracts, money, maintenance, inventory and documents.
+
+BUILD A REAL BUSINESS APPLICATION.

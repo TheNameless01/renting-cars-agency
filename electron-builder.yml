@@ -1,0 +1,34 @@
+appId: dz.location.erp.desktop
+productName: Gestion Agence de Location
+copyright: Copyright © 2026 Gestion Agence de Location
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - shared/**/*
+  - package.json
+  - "!node_modules/.cache"
+asar: true
+asarUnpack:
+  - "node_modules/better-sqlite3/**/*"
+  - "node_modules/bindings/**/*"
+  - "node_modules/file-uri-partition/**/*"
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: "${productName}-Setup-${version}-${arch}.${ext}"
+  requestedExecutionLevel: asInvoker
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Gestion Agence de Location
+  language: 1036
+extraMetadata:
+  main: dist-electron/main/index.js

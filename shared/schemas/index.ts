@@ -1,0 +1,232 @@
+import { z } from 'zod';
+import {
+  ALGERIA_WILAYA_CODES,
+  STANDARD_ALGERIAN_MATRICULE_REGEX,
+} from '../constants/algeria.ts';
+
+export const LoginSchema = z.object({
+  username: z.string().trim().min(2).max(64),
+  password: z.string().min(4).max(128),
+});
+
+export const BootstrapAdminSchema = z.object({
+  username: z.string().trim().min(3).max(64).regex(/^[a-zA-Z0-9._-]+$/),
+  fullName: z.string().trim().min(2).max(120),
+  password: z.string().min(8).max(128),
+});
+
+export const UnlockSessionSchema = z.object({
+  password: z.string().min(1).max(128),
+});
+
+export const ChangePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(128),
+  newPassword: z.string().min(8).max(128),
+});
+
+export const CreateUserSchema = z.object({
+  username: z.string().trim().min(3).max(64).regex(/^[a-zA-Z0-9._-]+$/),
+  fullName: z.string().trim().min(2).max(120),
+  password: z.string().min(8).max(128),
+  roleCode: z.enum(['ADMIN', 'AGENT']),
+});
+
+export const UpdateUserSchema = z.object({
+  userId: z.number().int().positive(),
+  fullName: z.string().trim().min(2).max(120).optional(),
+  roleCode: z.enum(['ADMIN', 'AGENT']).optional(),
+  isActive: z.boolean().optional(),
+  unlockAccount: z.boolean().optional(),
+  resetPassword: z.string().min(8).max(128).optional(),
+  permissionOverrides: z
+    .array(
+      z.object({
+        code: z.string().min(3),
+        granted: z.boolean().nullable(),
+      })
+    )
+    .optional(),
+});
+
+export const UpdateSettingsBatchSchema = z.object({
+  updates: z
+    .array(
+      z.object({
+        key: z.string().trim().min(2).max(120),
+        group: z.enum(['agency', 'business', 'documents', 'app']),
+        value: z.string().max(4000),
+      })
+    )
+    .min(1),
+});
+
+export const UpsertWilayaSchema = z.object({
+  code: z.string().trim().min(2).max(6).regex(/^[A-Za-z0-9_-]+$/),
+  nameFr: z.string().trim().min(2).max(100),
+  nameAr: z.string().trim().min(2).max(100),
+  isNewlyCreated2026: z.boolean(),
+  parentWilayaCode: z.string().trim().max(6).nullable().optional(),
+  decreeReference: z.string().trim().max(120).nullable().optional(),
+  effectiveYear: z.number().int().min(1962).max(2100),
+  isActive: z.boolean(),
+  notes: z.string().max(500).nullable().optional(),
+});
+
+export const CreateVehicleSchema = z.object({
+  internalCode: z.string().trim().min(1).max(32),
+  matricule: z
+    .string()
+    .trim()
+    .min(5)
+    .max(32)
+    .refine(
+      (val) => STANDARD_ALGERIAN_MATRICULE_REGEX.test(val) || val.length >= 5,
+      'Matricule invalide'
+    ),
+  vin: z.string().trim().max(32).nullable().optional(),
+  brand: z.string().trim().min(1).max(64),
+  model: z.string().trim().min(1).max(64),
+  year: z.number().int().min(1980).max(2035),
+  color: z.string().trim().min(1).max(40),
+  category: z.string().trim().min(1).max(64),
+  fuelType: z.enum(['ESSENCE', 'DIESEL', 'GPL', 'OTHER']),
+  transmission: z.enum(['MANUAL', 'AUTOMATIC']),
+  seats: z.number().int().min(2).max(9),
+  currentOdometerKm: z.number().int().min(0),
+  acquisitionDate: z.string().nullable().optional(),
+  acquisitionCostMinor: z.number().int().min(0).nullable().optional(),
+  defaultDailyRateMinor: z.number().int().min(0),
+  defaultWeeklyRateMinor: z.number().int().min(0).nullable().optional(),
+  defaultMonthlyRateMinor: z.number().int().min(0).nullable().optional(),
+  notes: z.string().max(2000).nullable().optional(),
+});
+
+export const CreateCustomerSchema = z.object({
+  customerType: z.enum(['INDIVIDUAL', 'COMPANY']),
+  fullName: z.string().trim().min(2).max(160),
+  dateOfBirth: z.string().nullable().optional(),
+  phone: z.string().trim().min(6).max(32),
+  secondaryPhone: z.string().trim().max(32).nullable().optional(),
+  address: z.string().trim().max(255).nullable().optional(),
+  wilayaCode: z
+    .string()
+    .refine((c) => !c || ALGERIA_WILAYA_CODES.has(c), 'Code wilaya invalide (01-69)')
+    .nullable()
+    .optional(),
+  commune: z.string().trim().max(100).nullable().optional(),
+  cniNumber: z.string().trim().max(64).nullable().optional(),
+  passportNumber: z.string().trim().max(64).nullable().optional(),
+  drivingLicenceNumber: z.string().trim().max(64).nullable().optional(),
+  drivingLicenceIssueDate: z.string().nullable().optional(),
+  drivingLicenceExpirationDate: z.string().nullable().optional(),
+  internalNotes: z.string().max(2000).nullable().optional(),
+  company: z
+    .object({
+      companyName: z.string().trim().min(2).max(180),
+      legalRepresentative: z.string().trim().min(2).max(160),
+      rcNumber: z.string().trim().max(64).nullable().optional(),
+      nifNumber: z.string().trim().max(64).nullable().optional(),
+      nisNumber: z.string().trim().max(64).nullable().optional(),
+      artNumber: z.string().trim().max(64).nullable().optional(),
+      bonDeCommandeNumber: z.string().trim().max(64).nullable().optional(),
+    })
+    .nullable()
+    .optional(),
+});
+
+export const CreateRiskRecordSchema = z.object({
+  customerId: z.number().int().positive(),
+  riskLevel: z.enum(['LOW', 'MEDIUM', 'HIGH', 'BLACKLISTED']),
+  reason: z.enum([
+    'UNPAID_DEBT',
+    'TRAFFIC_FINE',
+    'RADAR_FINE',
+    'VEHICLE_DAMAGE',
+    'LATE_RETURN',
+    'CONTRACT_VIOLATION',
+    'OTHER',
+  ]),
+  description: z.string().trim().min(5).max(2000),
+  incidentDate: z.string().min(8),
+});
+
+export const CreateContractSchema = z.object({
+  reservationId: z.number().int().positive().nullable().optional(),
+  customerId: z.number().int().positive(),
+  vehicleId: z.number().int().positive(),
+  startDate: z.string().min(10),
+  expectedReturnDate: z.string().min(10),
+  departureOdometerKm: z.number().int().min(0),
+  mileageMode: z.enum(['UNLIMITED', 'DAILY_ALLOWANCE', 'CUSTOM_TOTAL']),
+  dailyMileageAllowanceKm: z.number().int().min(0).nullable().optional(),
+  includedTotalKm: z.number().int().min(0).nullable().optional(),
+  extraKmRateMinor: z.number().int().min(0),
+  currency: z.enum(['DZD', 'EUR']).default('DZD'),
+  baseRentalTotalMinor: z.number().int().min(0),
+  discountMinor: z.number().int().min(0).default(0),
+  depositAmountMinor: z.number().int().min(0),
+  depositCurrency: z.enum(['DZD', 'EUR']).default('DZD'),
+  initialPaymentMinor: z.number().int().min(0).default(0),
+  initialPaymentMethod: z.enum(['CASH', 'CCP', 'BARIDIMOB', 'BANK_TRANSFER', 'OTHER']).default('CASH'),
+  initialPaymentReference: z.string().max(128).nullable().optional(),
+  blacklistOverrideReason: z.string().max(500).nullable().optional(),
+  notes: z.string().max(2000).nullable().optional(),
+});
+
+export const ExtendContractSchema = z.object({
+  contractId: z.number().int().positive(),
+  newReturnDate: z.string().min(10),
+  additionalAmountMinor: z.number().int().min(0),
+  additionalKmAllowance: z.number().int().min(0).default(0),
+  notes: z.string().max(1000).nullable().optional(),
+});
+
+export const RecordPaymentSchema = z.object({
+  contractId: z.number().int().positive(),
+  direction: z.enum(['INFLOW', 'REFUND']),
+  method: z.enum(['CASH', 'CCP', 'BARIDIMOB', 'BANK_TRANSFER', 'OTHER']),
+  paymentReference: z.string().max(128).nullable().optional(),
+  amountMinor: z.number().int().positive(),
+  currency: z.enum(['DZD', 'EUR']).default('DZD'),
+  paymentDate: z.string().min(8),
+  description: z.string().max(500).nullable().optional(),
+});
+
+export const SettleDepositSchema = z.object({
+  depositId: z.number().int().positive(),
+  deductedAmountMinor: z.number().int().min(0),
+  refundedAmountMinor: z.number().int().min(0),
+  deductionReason: z.string().max(500).nullable().optional(),
+});
+
+export const CreateExpenseSchema = z.object({
+  category: z.enum([
+    'MAINTENANCE',
+    'REPAIRS',
+    'SPARE_PARTS',
+    'INSURANCE',
+    'VIGNETTE',
+    'TECHNICAL_INSPECTION',
+    'CLEANING',
+    'ADMINISTRATIVE',
+    'OTHER',
+  ]),
+  vehicleId: z.number().int().positive().nullable().optional(),
+  supplierId: z.number().int().positive().nullable().optional(),
+  maintenanceRecordId: z.number().int().positive().nullable().optional(),
+  amountMinor: z.number().int().positive(),
+  currency: z.enum(['DZD', 'EUR']).default('DZD'),
+  expenseDate: z.string().min(8),
+  paymentMethod: z.enum(['CASH', 'CCP', 'BARIDIMOB', 'BANK_TRANSFER', 'OTHER']).default('CASH'),
+  description: z.string().trim().min(2).max(500),
+});
+
+export const InventoryMovementSchema = z.object({
+  partId: z.number().int().positive(),
+  movementType: z.enum(['PURCHASE', 'ENTRY', 'WITHDRAWAL', 'MAINTENANCE_USE', 'ADJUSTMENT']),
+  quantityDelta: z.number().int().refine((n) => n !== 0, 'La quantité ne peut pas être zéro'),
+  unitCostMinor: z.number().int().min(0).default(0),
+  maintenanceRecordId: z.number().int().positive().nullable().optional(),
+  notes: z.string().max(500).nullable().optional(),
+  overrideReason: z.string().max(500).nullable().optional(),
+});

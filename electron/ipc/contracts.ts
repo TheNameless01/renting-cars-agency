@@ -1,0 +1,158 @@
+import type {
+  AppNotification,
+  AuthSession,
+  AuditLogEntry,
+  BackupRecord,
+  CashRegisterSession,
+  ContractPayment,
+  Customer,
+  CustomerRiskRecord,
+  Deposit,
+  DocumentFormat,
+  DocumentKind,
+  Expense,
+  GeneratedDocument,
+  InventoryMovement,
+  InventoryPart,
+  MaintenanceRecord,
+  RentalContract,
+  Reservation,
+  User,
+  Vehicle,
+  VehicleInspection,
+} from '../../shared/types/domain.ts';
+
+/**
+ * Explicit IPC channel registry for Electron main <-> renderer communication.
+ * Renderer must NEVER access SQLite or Node fs directly; all calls flow via contextBridge.
+ */
+export const IPC_CHANNELS = {
+  AUTH_STATUS: 'auth:status',
+  AUTH_BOOTSTRAP_ADMIN: 'auth:bootstrapAdmin',
+  AUTH_LOGIN: 'auth:login',
+  AUTH_LOGOUT: 'auth:logout',
+  AUTH_LOCK: 'auth:lock',
+  AUTH_UNLOCK: 'auth:unlock',
+  AUTH_ME: 'auth:me',
+  AUTH_CHANGE_PASSWORD: 'auth:changePassword',
+
+  USERS_LIST: 'users:list',
+  USERS_PERMISSIONS: 'users:permissions',
+  USERS_CREATE: 'users:create',
+  USERS_UPDATE: 'users:update',
+
+  SETTINGS_GET_ALL: 'settings:getAll',
+  SETTINGS_UPDATE_BATCH: 'settings:updateBatch',
+
+  WILAYAS_LIST: 'wilayas:list',
+  WILAYAS_UPSERT: 'wilayas:upsert',
+
+  DASHBOARD_SUMMARY: 'dashboard:summary',
+
+  VEHICLES_LIST: 'vehicles:list',
+  VEHICLES_GET: 'vehicles:get',
+  VEHICLES_CREATE: 'vehicles:create',
+  VEHICLES_UPDATE: 'vehicles:update',
+  VEHICLES_ARCHIVE: 'vehicles:archive',
+
+  CUSTOMERS_LIST: 'customers:list',
+  CUSTOMERS_GET: 'customers:get',
+  CUSTOMERS_CREATE: 'customers:create',
+  CUSTOMERS_UPDATE: 'customers:update',
+  CUSTOMERS_ADD_RISK: 'customers:addRisk',
+  CUSTOMERS_RESOLVE_RISK: 'customers:resolveRisk',
+
+  PLANNING_CALENDAR: 'planning:calendar',
+  PLANNING_CHECK_AVAILABILITY: 'planning:checkAvailability',
+  RESERVATIONS_CREATE: 'reservations:create',
+
+  CONTRACTS_LIST: 'contracts:list',
+  CONTRACTS_GET: 'contracts:get',
+  CONTRACTS_CREATE: 'contracts:create',
+  CONTRACTS_EXTEND: 'contracts:extend',
+  CONTRACTS_COMPLETE: 'contracts:complete',
+  CONTRACTS_CANCEL: 'contracts:cancel',
+
+  INSPECTIONS_CREATE: 'inspections:create',
+  INSPECTIONS_GET_BY_CONTRACT: 'inspections:getByContract',
+
+  FINANCE_RECORD_PAYMENT: 'finance:recordPayment',
+  FINANCE_SETTLE_DEPOSIT: 'finance:settleDeposit',
+  FINANCE_RECORD_EXPENSE: 'finance:recordExpense',
+  FINANCE_CASH_SESSION_CURRENT: 'finance:cashSessionCurrent',
+  FINANCE_CASH_SESSION_OPEN: 'finance:cashSessionOpen',
+  FINANCE_CASH_SESSION_CLOSE: 'finance:cashSessionClose',
+
+  MAINTENANCE_LIST: 'maintenance:list',
+  MAINTENANCE_CREATE: 'maintenance:create',
+
+  INVENTORY_LIST: 'inventory:list',
+  INVENTORY_RECORD_MOVEMENT: 'inventory:recordMovement',
+
+  DOCUMENTS_GENERATE: 'documents:generate',
+  DOCUMENTS_LIST: 'documents:list',
+  DOCUMENTS_REPRINT: 'documents:reprint',
+
+  NOTIFICATIONS_LIST: 'notifications:list',
+  NOTIFICATIONS_MARK_READ: 'notifications:markRead',
+
+  AUDIT_LIST: 'audit:list',
+
+  BACKUPS_LIST: 'backups:list',
+  BACKUPS_CREATE_MANUAL: 'backups:createManual',
+  BACKUPS_RESTORE: 'backups:restore',
+} as const;
+
+export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];
+
+export interface IpcResult<T> {
+  ok: boolean;
+  data?: T;
+  error?: {
+    code: 'UNAUTHORIZED' | 'FORBIDDEN' | 'LOCKED' | 'VALIDATION_ERROR' | 'CONFLICT' | 'NOT_FOUND' | 'INTERNAL_ERROR';
+    message: string;
+    details?: unknown;
+  };
+}
+
+export interface ElectronBridgeAPI {
+  readonly runtime: 'desktop';
+  invoke<TReq = unknown, TRes = unknown>(channel: IpcChannel, payload?: TReq): Promise<IpcResult<TRes>>;
+}
+
+export interface DashboardSummaryPayload {
+  dateFrom?: string;
+  dateTo?: string;
+}
+
+export interface GenerateDocumentPayload {
+  documentKind: DocumentKind;
+  format: DocumentFormat;
+  contractId?: number;
+  paymentId?: number;
+  depositId?: number;
+  inspectionId?: number;
+  invoiceId?: number;
+}
+
+export type DomainEntityMap = {
+  authSession: AuthSession;
+  users: User[];
+  vehicles: Vehicle[];
+  customers: Customer[];
+  riskRecords: CustomerRiskRecord[];
+  reservations: Reservation[];
+  contracts: RentalContract[];
+  payments: ContractPayment[];
+  deposits: Deposit[];
+  inspections: VehicleInspection[];
+  expenses: Expense[];
+  cashSession: CashRegisterSession | null;
+  maintenance: MaintenanceRecord[];
+  inventoryParts: InventoryPart[];
+  inventoryMovements: InventoryMovement[];
+  documents: GeneratedDocument[];
+  notifications: AppNotification[];
+  auditLogs: AuditLogEntry[];
+  backups: BackupRecord[];
+};
