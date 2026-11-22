@@ -17,6 +17,11 @@ export type PermissionCode =
   | 'contracts:extend'
   | 'contracts:cancel'
   | 'inspections:write'
+  | 'inspections:view'
+  | 'inspections:create'
+  | 'inspections:update'
+  | 'inspections:finalize'
+  | 'inspections:manage_damage'
   | 'finance:read'
   | 'finance:record_payment'
   | 'finance:manage_deposit'
@@ -24,8 +29,18 @@ export type PermissionCode =
   | 'finance:cash_register'
   | 'finance:approve_adjustment'
   | 'maintenance:write'
+  | 'maintenance:view'
+  | 'maintenance:create'
+  | 'maintenance:update'
+  | 'maintenance:complete'
+  | 'maintenance:manage_types'
   | 'inventory:read'
   | 'inventory:write'
+  | 'inventory:view'
+  | 'inventory:manage_parts'
+  | 'inventory:record_movements'
+  | 'inventory:manage_suppliers'
+  | 'inventory:adjust_stock'
   | 'inventory:override_negative'
   | 'documents:generate'
   | 'reports:view'
@@ -359,7 +374,11 @@ export interface CustomerFinancialAdjustment {
 }
 
 export type InspectionStage = 'DEPARTURE' | 'RETURN';
+export type InspectionStatus = 'DRAFT' | 'FINALIZED';
 export type InspectionItemCondition = 'GOOD' | 'DAMAGED' | 'MISSING';
+export type DamageType = 'SCRATCH' | 'DENT' | 'CRACK' | 'BROKEN' | 'MISSING_ACCESSORY' | 'OTHER';
+export type DamageSeverity = 'MINOR' | 'MODERATE' | 'MAJOR' | 'CRITICAL';
+export type DamageStatus = 'REPORTED' | 'UNDER_REVIEW' | 'CONFIRMED' | 'UNDER_REPAIR' | 'REPAIRED' | 'REJECTED';
 
 export interface VehicleInspection {
   id: number;
@@ -367,32 +386,82 @@ export interface VehicleInspection {
   contractId: number;
   vehicleId: number;
   stage: InspectionStage;
+  status: InspectionStatus;
   odometerKm: number;
   fuelLevelPercent: number;
   exteriorNotes: string | null;
   interiorNotes: string | null;
   agencySignatureData: string | null;
   customerSignatureData: string | null;
+  customerAcknowledged: boolean;
+  customerAcknowledgmentNotes: string | null;
+  lateReturnMinutes: number;
+  mileageDeltaKm: number | null;
   inspectorUserId: number;
   inspectedAt: string;
+  finalizedAt: string | null;
+  finalizedByUserId: number | null;
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface InspectionItem {
   id: number;
   inspectionId: number;
   itemKey: string;
+  category: string;
   labelFr: string;
   labelAr: string;
   condition: InspectionItemCondition;
   notes: string | null;
+  sortOrder: number;
 }
 
 export interface InspectionPhoto {
   id: number;
   inspectionId: number;
+  damageId: number | null;
   filePath: string;
+  originalFileName: string | null;
+  mimeType: string | null;
   caption: string | null;
+  uploadedByUserId: number | null;
+  createdAt: string;
+}
+
+export interface VehicleDamage {
+  id: number;
+  damageCode: string;
+  vehicleId: number;
+  contractId: number | null;
+  inspectionId: number | null;
+  zoneCode: string;
+  diagramX: number | null;
+  diagramY: number | null;
+  damageType: DamageType;
+  severity: DamageSeverity;
+  description: string;
+  isPreExisting: boolean;
+  isNewlyDiscovered: boolean;
+  status: DamageStatus;
+  estimatedRepairCostMinor: number | null;
+  repairReference: string | null;
+  linkedExpenseId: number | null;
+  reportedByUserId: number;
+  reportedAt: string;
+  updatedAt: string;
+}
+
+export interface DamageResolutionRecord {
+  id: number;
+  damageId: number;
+  previousStatus: DamageStatus | null;
+  newStatus: DamageStatus;
+  notes: string;
+  repairReference: string | null;
+  linkedExpenseId: number | null;
+  recordedByUserId: number;
+  recordedByUsername?: string;
   createdAt: string;
 }
 
@@ -411,6 +480,9 @@ export interface TrafficFine {
   createdAt: string;
 }
 
+export type MaintenanceStatus = 'SCHEDULED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+export type MaintenanceAlertState = 'OK' | 'APPROACHING' | 'DUE' | 'OVERDUE';
+
 export interface MaintenanceType {
   id: number;
   code: string;
@@ -423,22 +495,56 @@ export interface MaintenanceType {
   isActive: boolean;
 }
 
-export interface MaintenanceRecord {
+export interface VehicleMaintenanceSchedule {
   id: number;
   vehicleId: number;
   maintenanceTypeId: number;
+  kmInterval: number | null;
+  dayInterval: number | null;
+  kmWarningThreshold: number;
+  dayWarningThreshold: number;
+  isActive: boolean;
+  notes: string | null;
+  updatedByUserId: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MaintenanceRecord {
+  id: number;
+  recordNumber: string | null;
+  vehicleId: number;
+  maintenanceTypeId: number;
   supplierId: number | null;
+  status: MaintenanceStatus;
+  isEmergency: boolean;
   workDescription: string;
   performedDate: string;
+  scheduledStartDate: string | null;
+  scheduledEndDate: string | null;
   odometerKm: number;
   nextDueDate: string | null;
   nextDueOdometerKm: number | null;
   laborCostMinor: number;
   partsCostMinor: number;
   totalCostMinor: number;
+  technicianName: string | null;
+  notes: string | null;
   invoiceFilePath: string | null;
+  invoiceOriginalName: string | null;
+  invoiceMimeType: string | null;
+  blockedPeriodId: number | null;
+  partsConsumedLocked: boolean;
   recordedByUserId: number;
+  completedAt: string | null;
   createdAt: string;
+  updatedAt: string;
+}
+
+export interface MaintenancePartInput {
+  partId: number;
+  quantityUsed: number;
+  unitCostMinor?: number;
 }
 
 export interface InventoryPart {
@@ -447,17 +553,27 @@ export interface InventoryPart {
   partName: string;
   category: string;
   description: string | null;
+  unitLabel: string;
+  compatibleModels: string | null;
   quantityAvailable: number;
   minimumStock: number;
   unitPurchasePriceMinor: number;
   supplierId: number | null;
   storageLocation: string | null;
   lastPurchaseDate: string | null;
+  isArchived: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
-export type InventoryMovementType = 'PURCHASE' | 'ENTRY' | 'WITHDRAWAL' | 'MAINTENANCE_USE' | 'ADJUSTMENT';
+export type InventoryMovementType =
+  | 'INITIAL_STOCK'
+  | 'PURCHASE'
+  | 'ENTRY'
+  | 'WITHDRAWAL'
+  | 'MAINTENANCE_USE'
+  | 'RETURN'
+  | 'ADJUSTMENT';
 
 export interface InventoryMovement {
   id: number;
@@ -466,6 +582,11 @@ export interface InventoryMovement {
   quantityDelta: number;
   unitCostMinor: number;
   maintenanceRecordId: number | null;
+  vehicleId: number | null;
+  supplierId: number | null;
+  referenceCode: string | null;
+  expenseId: number | null;
+  movementDate: string;
   notes: string | null;
   overrideReason: string | null;
   recordedByUserId: number;
@@ -476,10 +597,13 @@ export interface Supplier {
   id: number;
   name: string;
   phone: string | null;
+  email: string | null;
   address: string | null;
+  wilayaCode: string | null;
   specialty: string | null;
   nifNumber: string | null;
   notes: string | null;
+  isArchived: boolean;
   createdAt: string;
   updatedAt: string;
 }

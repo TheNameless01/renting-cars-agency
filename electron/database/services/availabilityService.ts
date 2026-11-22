@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 
 export interface AvailabilityConflict {
-  sourceType: 'VEHICLE_STATUS' | 'CONTRACT' | 'RESERVATION' | 'BLOCKED_PERIOD';
+  sourceType: 'VEHICLE_STATUS' | 'CONTRACT' | 'RESERVATION' | 'BLOCKED_PERIOD' | 'MAINTENANCE';
   sourceId: number | string;
   reference: string;
   startDate: string;
@@ -21,6 +21,7 @@ export interface AvailabilityCheckResult {
  * - Overlapping active/confirmed/extended rental contracts (including extensions via expected_return_date)
  * - Overlapping pending/confirmed reservations
  * - Overlapping active vehicle_blocked_periods (maintenance / admin hold)
+ * - Overlapping scheduled or in-progress maintenance_records
  */
 export function checkVehicleAvailability(
   db: Database.Database,
@@ -30,9 +31,21 @@ export function checkVehicleAvailability(
     endDate: string;
     excludeContractId?: number | null;
     excludeReservationId?: number | null;
+    excludeBlockId?: number | null;
+    excludeMaintenanceId?: number | null;
+    allowVehicleInMaintenance?: boolean;
   }
 ): AvailabilityCheckResult {
-  const { vehicleId, startDate, endDate, excludeContractId, excludeReservationId } = params;
+  const {
+    vehicleId,
+    startDate,
+    endDate,
+    excludeContractId,
+    excludeReservationId,
+    excludeBlockId,
+    excludeMaintenanceId,
+    allowVehicleInMaintenance,
+  } = params;
   const conflicts: AvailabilityConflict[] = [];
 
   if (Date.parse(endDate) <= Date.parse(startDate)) {
@@ -69,7 +82,7 @@ export function checkVehicleAvailability(
     return { available: false, conflicts };
   }
 
-  if (vehicle.status === 'MAINTENANCE') {
+  if (vehicle.status === 'MAINTENANCE' && !allowVehicleInMaintenance && excludeMaintenanceId == null && excludeBlockId == null) {
     conflicts.push({
       sourceType: 'VEHICLE_STATUS',
       sourceId: vehicle.id,
@@ -137,17 +150,18 @@ export function checkVehicleAvailability(
   // Overlapping blocked periods
   const blockConflicts = db
     .prepare<
-      [number, string, string],
+      [number, number, string, string],
       { id: number; block_type: string; start_date: string; end_date: string; reason: string }
     >(
       `SELECT id, block_type, start_date, end_date, reason
        FROM vehicle_blocked_periods
        WHERE vehicle_id = ?
+         AND id != ?
          AND is_active = 1
          AND start_date < ?
          AND end_date > ?`
     )
-    .all(vehicleId, endDate, startDate);
+    .all(vehicleId, excludeBlockId ?? -1, endDate, startDate);
 
   for (const b of blockConflicts) {
     conflicts.push({
@@ -157,6 +171,56 @@ export function checkVehicleAvailability(
       startDate: b.start_date,
       endDate: b.end_date,
       details: b.reason,
+    });
+  }
+
+  // Overlapping maintenance records not already represented by an active blocked period
+  const maintConflicts = db
+    .prepare<
+      [number, number, string, string],
+      {
+        id: number;
+        record_number: string | null;
+        status: string;
+        work_description: string;
+        start_at: string;
+        end_at: string;
+      }
+    >(
+      `SELECT mr.id,
+              mr.record_number,
+              mr.status,
+              mr.work_description,
+              COALESCE(mr.scheduled_start_date, mr.performed_date) AS start_at,
+              COALESCE(mr.scheduled_end_date, '9999-12-31T23:59:59Z') AS end_at
+       FROM maintenance_records mr
+       WHERE mr.vehicle_id = ?
+         AND mr.id != ?
+         AND mr.status IN ('SCHEDULED', 'IN_PROGRESS')
+         AND (
+           mr.blocked_period_id IS NULL
+           OR NOT EXISTS (
+             SELECT 1 FROM vehicle_blocked_periods vbp
+             WHERE vbp.id = mr.blocked_period_id AND vbp.is_active = 1
+           )
+         )
+         AND (
+           mr.scheduled_start_date IS NOT NULL
+           OR mr.status = 'IN_PROGRESS'
+         )
+         AND COALESCE(mr.scheduled_start_date, mr.performed_date) < ?
+         AND COALESCE(mr.scheduled_end_date, '9999-12-31T23:59:59Z') > ?`
+    )
+    .all(vehicleId, excludeMaintenanceId ?? -1, endDate, startDate);
+
+  for (const m of maintConflicts) {
+    conflicts.push({
+      sourceType: 'MAINTENANCE',
+      sourceId: m.id,
+      reference: m.record_number ?? `MNT-${m.id}`,
+      startDate: m.start_at,
+      endDate: m.end_at,
+      details: `${m.record_number ?? `MNT-${m.id}`}: ${m.work_description}`,
     });
   }
 
@@ -171,7 +235,8 @@ export function checkVehicleAvailability(
  */
 export function recomputeVehicleStatus(
   db: Database.Database,
-  vehicleId: number
+  vehicleId: number,
+  options?: { releaseManualMaintenance?: boolean }
 ): 'AVAILABLE' | 'RENTED' | 'RESERVED' | 'MAINTENANCE' {
   const vehicle = db
     .prepare<[number], { status: string }>('SELECT status FROM vehicles WHERE id = ?')
@@ -202,7 +267,19 @@ export function recomputeVehicleStatus(
       )
       .get(vehicleId, nowIso, nowIso);
 
-    if (vehicle.status === 'MAINTENANCE' || activeMaintenanceBlock) {
+    const activeMaintenanceRecord = db
+      .prepare<[number, string, string], { id: number }>(
+        `SELECT id FROM maintenance_records
+         WHERE vehicle_id = ? AND status = 'IN_PROGRESS'
+           AND (scheduled_start_date IS NULL OR scheduled_start_date <= ?)
+           AND (scheduled_end_date IS NULL OR scheduled_end_date >= ?)
+         LIMIT 1`
+      )
+      .get(vehicleId, nowIso, nowIso);
+
+    const preserveManualMaint = !options?.releaseManualMaintenance && vehicle.status === 'MAINTENANCE';
+
+    if (activeMaintenanceBlock || activeMaintenanceRecord || preserveManualMaint) {
       nextStatus = 'MAINTENANCE';
     } else {
       const confirmedContract = db
@@ -235,7 +312,7 @@ export function recomputeVehicleStatus(
 }
 
 export interface CalendarTimelineEvent {
-  eventType: 'CONTRACT' | 'RESERVATION' | 'BLOCKED_PERIOD';
+  eventType: 'CONTRACT' | 'RESERVATION' | 'BLOCKED_PERIOD' | 'MAINTENANCE';
   id: number;
   vehicleId: number;
   customerId: number | null;
@@ -307,6 +384,26 @@ export function getPlanningCalendar(
     )
     .all(rangeEnd, rangeStart);
 
+  const maintenances = db
+    .prepare<[string, string], any>(
+      `SELECT mr.id, mr.vehicle_id, mr.record_number, mr.status,
+              COALESCE(mr.scheduled_start_date, mr.performed_date) AS start_date,
+              COALESCE(mr.scheduled_end_date, mr.performed_date) AS end_date,
+              mr.work_description
+       FROM maintenance_records mr
+       WHERE mr.status IN ('SCHEDULED', 'IN_PROGRESS')
+         AND (
+           mr.blocked_period_id IS NULL
+           OR NOT EXISTS (
+             SELECT 1 FROM vehicle_blocked_periods vbp
+             WHERE vbp.id = mr.blocked_period_id AND vbp.is_active = 1
+           )
+         )
+         AND COALESCE(mr.scheduled_start_date, mr.performed_date) <= ?
+         AND COALESCE(mr.scheduled_end_date, mr.performed_date) >= ?`
+    )
+    .all(rangeEnd, rangeStart);
+
   const events: CalendarTimelineEvent[] = [
     ...contracts.map((c) => ({
       eventType: 'CONTRACT' as const,
@@ -346,6 +443,19 @@ export function getPlanningCalendar(
       endDate: b.end_date,
       actualReturnDate: null,
       notes: b.reason,
+    })),
+    ...maintenances.map((m) => ({
+      eventType: 'MAINTENANCE' as const,
+      id: m.id,
+      vehicleId: m.vehicle_id,
+      customerId: null,
+      customerName: null,
+      reference: m.record_number || `MNT-${m.id}`,
+      status: m.status,
+      startDate: m.start_date,
+      endDate: m.end_date,
+      actualReturnDate: null,
+      notes: m.work_description,
     })),
   ];
 

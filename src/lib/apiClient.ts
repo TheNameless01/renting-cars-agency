@@ -1,6 +1,7 @@
 import { IPC_CHANNELS, type ElectronBridgeAPI, type IpcChannel, type IpcResult } from '../../electron/ipc/contracts.ts';
 import { PREVIEW_ENDPOINTS } from '../../shared/api/previewContracts.ts';
 import type {
+  AppNotification,
   AuditLogEntry,
   AuthSession,
   CashMovementType,
@@ -14,10 +15,28 @@ import type {
   CustomerCompany,
   CustomerDocument,
   CustomerRiskRecord,
+  DamageResolutionRecord,
+  DamageSeverity,
+  DamageStatus,
+  DamageType,
   DepositChargeCategory,
   DepositStatus,
   ExpenseCategory,
+  InspectionItem,
+  InspectionItemCondition,
+  InspectionPhoto,
+  InspectionStage,
+  InspectionStatus,
+  InventoryMovement,
+  InventoryMovementType,
+  InventoryPart,
+  MaintenanceAlertState,
+  MaintenancePartInput,
+  MaintenanceRecord,
+  MaintenanceStatus,
+  MaintenanceType,
   MileageMode,
+  NotificationSeverity,
   PaymentDirection,
   PaymentMethod,
   PermissionCode,
@@ -27,9 +46,12 @@ import type {
   RoleCode,
   Supplier,
   Vehicle,
+  VehicleDamage,
   VehicleDocType,
   VehicleDocument,
   VehicleFuelType,
+  VehicleInspection,
+  VehicleMaintenanceSchedule,
   VehicleStatus,
   VehicleTransmission,
 } from '../../shared/types/domain.ts';
@@ -183,7 +205,7 @@ export interface CustomerEligibilityDto {
 export interface AvailabilityResultDto {
   available: boolean;
   conflicts: Array<{
-    sourceType: 'VEHICLE_STATUS' | 'CONTRACT' | 'RESERVATION' | 'BLOCKED_PERIOD';
+    sourceType: 'VEHICLE_STATUS' | 'CONTRACT' | 'RESERVATION' | 'BLOCKED_PERIOD' | 'MAINTENANCE';
     sourceId: number | string;
     reference: string;
     startDate: string;
@@ -205,7 +227,7 @@ export interface PlanningCalendarDto {
     defaultDailyRateMinor: number;
   }>;
   events: Array<{
-    eventType: 'CONTRACT' | 'RESERVATION' | 'BLOCKED_PERIOD';
+    eventType: 'CONTRACT' | 'RESERVATION' | 'BLOCKED_PERIOD' | 'MAINTENANCE';
     id: number;
     vehicleId: number;
     customerId: number | null;
@@ -733,6 +755,230 @@ export interface FinancialDashboardReportDto {
 
 export type SupplierDto = Supplier;
 export type CashMovementKind = CashMovementType;
+
+export interface InspectionListItemDto extends VehicleInspection {
+  contractNumber: string;
+  contractStatus: string;
+  expectedReturnDate: string;
+  customerId: number;
+  customerName: string;
+  customerPhone: string;
+  vehicleLabel: string;
+  vehicleMatricule: string;
+  inspectorName: string;
+  inspectorUsername: string;
+  photoCount: number;
+  damageCount: number;
+  newDamageCount: number;
+  issueItemCount: number;
+}
+
+export interface InspectionChecklistDiffDto {
+  itemKey: string;
+  labelFr: string;
+  labelAr: string;
+  category: string;
+  departureCondition: InspectionItemCondition | null;
+  departureNotes: string | null;
+  returnCondition: InspectionItemCondition | null;
+  returnNotes: string | null;
+  isDegraded: boolean;
+  isMissingOnReturn: boolean;
+}
+
+export interface InspectionComparisonDto {
+  departureInspection: VehicleInspection | null;
+  returnInspection: VehicleInspection | null;
+  odometerDeltaKm: number | null;
+  fuelDeltaPercent: number | null;
+  lateReturnMinutes: number;
+  degradedItemsCount: number;
+  missingAccessoriesCount: number;
+  checklistDiffs: InspectionChecklistDiffDto[];
+  newlyDiscoveredDamages: VehicleDamage[];
+  preExistingDamages: VehicleDamage[];
+}
+
+export interface InspectionDetailDto {
+  inspection: VehicleInspection & {
+    inspectorName: string;
+    inspectorUsername: string;
+    finalizedByName: string | null;
+  };
+  contract: {
+    id: number;
+    contractNumber: string;
+    status: string;
+    startDate: string;
+    expectedReturnDate: string;
+    actualReturnDate: string | null;
+    departureOdometerKm: number;
+    returnOdometerKm: number | null;
+  };
+  vehicle: {
+    id: number;
+    internalCode: string;
+    matricule: string;
+    brand: string;
+    model: string;
+    year: number;
+    color: string;
+    category: string;
+    currentOdometerKm: number;
+  };
+  customer: {
+    id: number;
+    customerType: string;
+    fullName: string;
+    phone: string;
+    drivingLicenceNumber: string | null;
+  };
+  items: InspectionItem[];
+  photos: InspectionPhoto[];
+  damages: VehicleDamage[];
+  comparison: InspectionComparisonDto | null;
+}
+
+export interface ContractInspectionsDto {
+  contractId: number;
+  departure: InspectionDetailDto | null;
+  returnInspection: InspectionDetailDto | null;
+  comparison: InspectionComparisonDto | null;
+  openVehicleDamages: VehicleDamage[];
+}
+
+export interface VehicleDamageListItemDto extends VehicleDamage {
+  vehicleLabel: string;
+  vehicleMatricule: string;
+  contractNumber: string | null;
+  inspectionNumber: string | null;
+  inspectionStage: InspectionStage | null;
+  linkedExpenseNumber: string | null;
+  reportedByName: string;
+  resolutionHistory: DamageResolutionRecord[];
+}
+
+export interface InspectionPdfPayloadDto extends Omit<InspectionDetailDto, 'photos'> {
+  photos: Array<InspectionPhoto & { dataUrl: string | null }>;
+  agency: {
+    name: string;
+    commercialName: string;
+    address: string;
+    phone: string;
+    email: string;
+    nif: string;
+    rc: string;
+  };
+}
+
+// Phase 4 Step 2: Maintenance & Operational Alerts DTOs
+export type { MaintenanceType, VehicleMaintenanceSchedule };
+export type AppNotificationDto = AppNotification;
+
+export interface VehicleMaintenanceDueItemDto {
+  maintenanceTypeId: number;
+  code: string;
+  nameFr: string;
+  nameAr: string;
+  scheduleId: number | null;
+  hasCustomSchedule: boolean;
+  isScheduleActive: boolean;
+  kmInterval: number | null;
+  dayInterval: number | null;
+  kmWarningThreshold: number;
+  dayWarningThreshold: number;
+  currentOdometerKm: number;
+  lastRecordId: number | null;
+  lastPerformedDate: string | null;
+  lastOdometerKm: number | null;
+  nextDueDate: string | null;
+  nextDueOdometerKm: number | null;
+  remainingKm: number | null;
+  remainingDays: number | null;
+  alertState: MaintenanceAlertState;
+  activePlannedRecordId: number | null;
+  activePlannedStatus: string | null;
+  activePlannedDate: string | null;
+  scheduleNotes: string | null;
+}
+
+export interface MaintenanceRecordListItemDto extends MaintenanceRecord {
+  vehicleLabel: string;
+  vehicleMatricule: string;
+  maintenanceTypeCode: string;
+  maintenanceTypeNameFr: string;
+  maintenanceTypeNameAr: string;
+  supplierName: string | null;
+  recordedByUsername: string;
+  linkedExpenseId: number | null;
+  linkedExpenseNumber: string | null;
+  blockIsActive: boolean;
+}
+
+export interface MaintenancePartUsedDto {
+  id: number;
+  maintenanceRecordId: number;
+  partId: number;
+  partCode: string;
+  partName: string;
+  quantityUsed: number;
+  unitCostMinor: number;
+  totalCostMinor: number;
+}
+
+export interface MaintenanceRecordDetailDto {
+  record: MaintenanceRecordListItemDto;
+  parts: MaintenancePartUsedDto[];
+  blockedPeriod: {
+    id: number;
+    startDate: string;
+    endDate: string;
+    isActive: boolean;
+    reason: string;
+  } | null;
+}
+
+export interface VehicleMaintenanceOverviewDto {
+  vehicleId: number;
+  currentOdometerKm: number;
+  status: VehicleStatus;
+  dueSummary: VehicleMaintenanceDueItemDto[];
+  records: MaintenanceRecordListItemDto[];
+  alerts: AppNotificationDto[];
+}
+
+// Phase 4 Step 3: Spare Parts Inventory DTOs
+export interface InventoryPartListItemDto extends InventoryPart {
+  supplierName: string | null;
+  stockValueMinor: number;
+  stockStatus: 'IN_STOCK' | 'LOW_STOCK' | 'OUT_OF_STOCK';
+}
+
+export interface InventoryMovementListItemDto extends InventoryMovement {
+  partCode: string;
+  partName: string;
+  unitLabel: string;
+  maintenanceRecordNumber: string | null;
+  vehicleLabel: string | null;
+  supplierName: string | null;
+  expenseNumber: string | null;
+  recordedByUsername: string;
+}
+
+export interface InventoryOverviewDto {
+  totalSkuCount: number;
+  totalUnitsInStock: number;
+  totalValuationMinor: number;
+  lowStockCount: number;
+  outOfStockCount: number;
+  categories: string[];
+  stockAlerts: AppNotificationDto[];
+}
+
+export interface InventoryPartDetailDto {
+  part: InventoryPartListItemDto;
+  movements: InventoryMovementListItemDto[];
+}
 
 /**
  * In-memory auth token only (never written to localStorage or sessionStorage).
@@ -1591,25 +1837,51 @@ export const erpClient = {
       payload
     ),
 
-  listSuppliers: () =>
+  listSuppliers: (includeArchived = false) =>
     callBackend<SupplierDto[]>(
       IPC_CHANNELS.FINANCE_LIST_SUPPLIERS,
       'GET',
-      `${PREVIEW_ENDPOINTS.FINANCE}/suppliers`
+      `${PREVIEW_ENDPOINTS.FINANCE}/suppliers${buildQuery({
+        includeArchived: includeArchived ? 'true' : undefined,
+      })}`,
+      { includeArchived }
     ),
 
   createSupplier: (payload: {
+    id?: number;
     name: string;
     phone?: string | null;
+    email?: string | null;
     address?: string | null;
+    wilayaCode?: string | null;
     specialty?: string | null;
     nifNumber?: string | null;
     notes?: string | null;
+    isArchived?: boolean;
   }) =>
     callBackend<SupplierDto>(
       IPC_CHANNELS.FINANCE_CREATE_SUPPLIER,
       'POST',
       `${PREVIEW_ENDPOINTS.FINANCE}/suppliers`,
+      payload
+    ),
+
+  upsertSupplier: (payload: {
+    id?: number;
+    name: string;
+    phone?: string | null;
+    email?: string | null;
+    address?: string | null;
+    wilayaCode?: string | null;
+    specialty?: string | null;
+    nifNumber?: string | null;
+    notes?: string | null;
+    isArchived?: boolean;
+  }) =>
+    callBackend<SupplierDto>(
+      IPC_CHANNELS.FINANCE_UPSERT_SUPPLIER,
+      payload.id ? 'PUT' : 'POST',
+      payload.id ? `${PREVIEW_ENDPOINTS.FINANCE}/suppliers/${payload.id}` : `${PREVIEW_ENDPOINTS.FINANCE}/suppliers`,
       payload
     ),
 
@@ -1783,5 +2055,558 @@ export const erpClient = {
         lang: params?.lang,
       })}`,
       params
+    ),
+
+  // Phase 4 Step 1: Vehicle Inspections & Damage Management
+  listInspections: (filters?: {
+    vehicleId?: number;
+    contractId?: number;
+    stage?: InspectionStage | 'ALL';
+    status?: InspectionStatus | 'ALL';
+    onlyWithNewDamages?: boolean;
+    search?: string;
+  }) =>
+    callBackend<InspectionListItemDto[]>(
+      IPC_CHANNELS.INSPECTIONS_LIST,
+      'GET',
+      `${PREVIEW_ENDPOINTS.INSPECTIONS}${buildQuery({
+        vehicleId: filters?.vehicleId ? String(filters.vehicleId) : undefined,
+        contractId: filters?.contractId ? String(filters.contractId) : undefined,
+        stage: filters?.stage,
+        status: filters?.status,
+        onlyWithNewDamages: filters?.onlyWithNewDamages,
+        search: filters?.search,
+      })}`,
+      filters
+    ),
+
+  getInspectionDetail: (inspectionId: number) =>
+    callBackend<InspectionDetailDto>(
+      IPC_CHANNELS.INSPECTIONS_GET,
+      'GET',
+      `${PREVIEW_ENDPOINTS.INSPECTIONS}/${inspectionId}`,
+      { inspectionId }
+    ),
+
+  getContractInspections: (contractId: number) =>
+    callBackend<ContractInspectionsDto>(
+      IPC_CHANNELS.INSPECTIONS_GET_BY_CONTRACT,
+      'GET',
+      `${PREVIEW_ENDPOINTS.INSPECTIONS}/contract/${contractId}`,
+      { contractId }
+    ),
+
+  createInspection: (payload: {
+    contractId: number;
+    stage: InspectionStage;
+    odometerKm: number;
+    fuelLevelPercent: number;
+    exteriorNotes?: string | null;
+    interiorNotes?: string | null;
+    agencySignatureData?: string | null;
+    customerSignatureData?: string | null;
+    customerAcknowledged?: boolean;
+    customerAcknowledgmentNotes?: string | null;
+    inspectedAt?: string;
+    finalizeNow?: boolean;
+    items?: Array<{
+      itemKey: string;
+      category?: string;
+      labelFr: string;
+      labelAr: string;
+      condition: InspectionItemCondition;
+      notes?: string | null;
+      sortOrder?: number;
+    }>;
+    damages?: Array<{
+      zoneCode: string;
+      diagramX?: number | null;
+      diagramY?: number | null;
+      damageType: DamageType;
+      severity: DamageSeverity;
+      description: string;
+      isPreExisting?: boolean;
+      isNewlyDiscovered?: boolean;
+      estimatedRepairCostMinor?: number | null;
+    }>;
+  }) =>
+    callBackend<InspectionDetailDto>(
+      IPC_CHANNELS.INSPECTIONS_CREATE,
+      'POST',
+      PREVIEW_ENDPOINTS.INSPECTIONS,
+      payload
+    ),
+
+  updateInspectionDraft: (payload: {
+    inspectionId: number;
+    odometerKm?: number;
+    fuelLevelPercent?: number;
+    exteriorNotes?: string | null;
+    interiorNotes?: string | null;
+    agencySignatureData?: string | null;
+    customerSignatureData?: string | null;
+    customerAcknowledged?: boolean;
+    customerAcknowledgmentNotes?: string | null;
+    inspectedAt?: string;
+    items?: Array<{
+      itemKey: string;
+      category?: string;
+      labelFr: string;
+      labelAr: string;
+      condition: InspectionItemCondition;
+      notes?: string | null;
+      sortOrder?: number;
+    }>;
+  }) =>
+    callBackend<InspectionDetailDto>(
+      IPC_CHANNELS.INSPECTIONS_UPDATE,
+      'PATCH',
+      `${PREVIEW_ENDPOINTS.INSPECTIONS}/${payload.inspectionId}`,
+      payload
+    ),
+
+  finalizeInspection: (inspectionId: number) =>
+    callBackend<InspectionDetailDto>(
+      IPC_CHANNELS.INSPECTIONS_FINALIZE,
+      'POST',
+      `${PREVIEW_ENDPOINTS.INSPECTIONS}/${inspectionId}/finalize`,
+      { inspectionId }
+    ),
+
+  uploadInspectionPhoto: (payload: {
+    inspectionId: number;
+    damageId?: number | null;
+    originalFileName: string;
+    mimeType: 'image/jpeg' | 'image/png' | 'image/webp';
+    base64Data: string;
+    caption?: string | null;
+  }) =>
+    callBackend<InspectionPhoto>(
+      IPC_CHANNELS.INSPECTIONS_UPLOAD_PHOTO,
+      'POST',
+      `${PREVIEW_ENDPOINTS.INSPECTIONS}/${payload.inspectionId}/photos`,
+      payload
+    ),
+
+  readInspectionPhoto: (photoId: number) =>
+    callBackend<{
+      id: number;
+      inspectionId: number;
+      damageId: number | null;
+      originalFileName: string;
+      mimeType: string;
+      caption: string | null;
+      base64Data: string;
+    }>(
+      IPC_CHANNELS.INSPECTIONS_READ_PHOTO,
+      'GET',
+      `${PREVIEW_ENDPOINTS.INSPECTIONS}/photos/${photoId}`,
+      { photoId }
+    ),
+
+  deleteInspectionPhoto: (photoId: number) =>
+    callBackend<{ deleted: boolean; id: number }>(
+      IPC_CHANNELS.INSPECTIONS_DELETE_PHOTO,
+      'DELETE',
+      `${PREVIEW_ENDPOINTS.INSPECTIONS}/photos/${photoId}`,
+      { photoId }
+    ),
+
+  getInspectionPdfPayload: (inspectionId: number) =>
+    callBackend<InspectionPdfPayloadDto>(
+      IPC_CHANNELS.INSPECTIONS_GET_PDF_PAYLOAD,
+      'GET',
+      `${PREVIEW_ENDPOINTS.INSPECTIONS}/${inspectionId}/pdf-payload`,
+      { inspectionId }
+    ),
+
+  listVehicleDamages: (filters?: {
+    vehicleId?: number;
+    contractId?: number;
+    inspectionId?: number;
+    status?: DamageStatus | 'ALL';
+    onlyNewlyDiscovered?: boolean;
+  }) =>
+    callBackend<VehicleDamageListItemDto[]>(
+      IPC_CHANNELS.DAMAGES_LIST,
+      'GET',
+      `${PREVIEW_ENDPOINTS.INSPECTIONS}/damages${buildQuery({
+        vehicleId: filters?.vehicleId ? String(filters.vehicleId) : undefined,
+        contractId: filters?.contractId ? String(filters.contractId) : undefined,
+        inspectionId: filters?.inspectionId ? String(filters.inspectionId) : undefined,
+        status: filters?.status,
+        onlyNewlyDiscovered: filters?.onlyNewlyDiscovered,
+      })}`,
+      filters
+    ),
+
+  addVehicleDamage: (payload: {
+    vehicleId: number;
+    contractId?: number | null;
+    inspectionId?: number | null;
+    zoneCode: string;
+    diagramX?: number | null;
+    diagramY?: number | null;
+    damageType: DamageType;
+    severity: DamageSeverity;
+    description: string;
+    isPreExisting?: boolean;
+    isNewlyDiscovered?: boolean;
+    estimatedRepairCostMinor?: number | null;
+  }) =>
+    callBackend<VehicleDamage>(
+      IPC_CHANNELS.DAMAGES_ADD,
+      'POST',
+      `${PREVIEW_ENDPOINTS.INSPECTIONS}/damages`,
+      payload
+    ),
+
+  updateDamageStatus: (payload: {
+    damageId: number;
+    newStatus: DamageStatus;
+    notes: string;
+    estimatedRepairCostMinor?: number | null;
+    repairReference?: string | null;
+    linkedExpenseId?: number | null;
+  }) =>
+    callBackend<VehicleDamageListItemDto>(
+      IPC_CHANNELS.DAMAGES_UPDATE_STATUS,
+      'PATCH',
+      `${PREVIEW_ENDPOINTS.INSPECTIONS}/damages/${payload.damageId}/status`,
+      payload
+    ),
+
+  // Phase 4 Step 2: Maintenance & Operational Alerts
+  listMaintenanceTypes: (includeInactive = true) =>
+    callBackend<MaintenanceType[]>(
+      IPC_CHANNELS.MAINTENANCE_TYPES_LIST,
+      'GET',
+      `${PREVIEW_ENDPOINTS.MAINTENANCE}/types?includeInactive=${includeInactive ? 'true' : 'false'}`,
+      { includeInactive }
+    ),
+
+  upsertMaintenanceType: (payload: {
+    id?: number;
+    code: string;
+    nameFr: string;
+    nameAr: string;
+    defaultKmInterval?: number | null;
+    defaultDayInterval?: number | null;
+    kmWarningThreshold: number;
+    dayWarningThreshold: number;
+    isActive: boolean;
+  }) =>
+    callBackend<MaintenanceType>(
+      IPC_CHANNELS.MAINTENANCE_TYPES_UPSERT,
+      'POST',
+      `${PREVIEW_ENDPOINTS.MAINTENANCE}/types`,
+      payload
+    ),
+
+  getVehicleMaintenanceOverview: (vehicleId: number) =>
+    callBackend<VehicleMaintenanceOverviewDto>(
+      IPC_CHANNELS.MAINTENANCE_VEHICLE_OVERVIEW,
+      'GET',
+      `${PREVIEW_ENDPOINTS.MAINTENANCE}/vehicles/${vehicleId}/overview`,
+      { vehicleId }
+    ),
+
+  upsertVehicleMaintenanceSchedule: (payload: {
+    vehicleId: number;
+    maintenanceTypeId: number;
+    kmInterval?: number | null;
+    dayInterval?: number | null;
+    kmWarningThreshold: number;
+    dayWarningThreshold: number;
+    isActive: boolean;
+    notes?: string | null;
+  }) =>
+    callBackend<{ schedule: VehicleMaintenanceSchedule; dueItem: VehicleMaintenanceDueItemDto }>(
+      IPC_CHANNELS.MAINTENANCE_SCHEDULE_UPSERT,
+      'PUT',
+      `${PREVIEW_ENDPOINTS.MAINTENANCE}/schedules`,
+      payload
+    ),
+
+  listMaintenance: (filters?: {
+    vehicleId?: number;
+    maintenanceTypeId?: number;
+    status?: MaintenanceStatus | 'ALL';
+    isEmergency?: boolean;
+    dateFrom?: string;
+    dateTo?: string;
+    search?: string;
+  }) =>
+    callBackend<MaintenanceRecordListItemDto[]>(
+      IPC_CHANNELS.MAINTENANCE_LIST,
+      'GET',
+      `${PREVIEW_ENDPOINTS.MAINTENANCE}${buildQuery({
+        vehicleId: filters?.vehicleId ? String(filters.vehicleId) : undefined,
+        maintenanceTypeId: filters?.maintenanceTypeId ? String(filters.maintenanceTypeId) : undefined,
+        status: filters?.status,
+        isEmergency: filters?.isEmergency ? 'true' : undefined,
+        dateFrom: filters?.dateFrom,
+        dateTo: filters?.dateTo,
+        search: filters?.search,
+      })}`,
+      filters
+    ),
+
+  getMaintenanceDetail: (recordId: number) =>
+    callBackend<MaintenanceRecordDetailDto>(
+      IPC_CHANNELS.MAINTENANCE_GET,
+      'GET',
+      `${PREVIEW_ENDPOINTS.MAINTENANCE}/${recordId}`,
+      { recordId }
+    ),
+
+  createMaintenance: (payload: {
+    vehicleId: number;
+    maintenanceTypeId: number;
+    supplierId?: number | null;
+    status?: 'SCHEDULED' | 'IN_PROGRESS' | 'COMPLETED';
+    isEmergency?: boolean;
+    workDescription: string;
+    performedDate: string;
+    scheduledStartDate?: string | null;
+    scheduledEndDate?: string | null;
+    odometerKm: number;
+    nextDueDate?: string | null;
+    nextDueOdometerKm?: number | null;
+    laborCostMinor?: number;
+    partsCostMinor?: number;
+    partsUsed?: MaintenancePartInput[];
+    technicianName?: string | null;
+    notes?: string | null;
+    blockVehicle?: boolean;
+    recordInFinance?: boolean;
+    financeCategory?: 'MAINTENANCE' | 'REPAIRS';
+    financeExpenseScope?: 'TOTAL' | 'LABOR_ONLY';
+    paymentMethod?: PaymentMethod;
+    paymentReference?: string | null;
+    invoiceDoc?: {
+      originalFileName: string;
+      mimeType: 'image/jpeg' | 'image/png' | 'image/webp' | 'application/pdf';
+      base64Data: string;
+    } | null;
+  }) =>
+    callBackend<MaintenanceRecordDetailDto>(
+      IPC_CHANNELS.MAINTENANCE_CREATE,
+      'POST',
+      PREVIEW_ENDPOINTS.MAINTENANCE,
+      payload
+    ),
+
+  updateMaintenance: (payload: {
+    recordId: number;
+    status?: MaintenanceStatus;
+    supplierId?: number | null;
+    workDescription?: string;
+    performedDate?: string;
+    scheduledStartDate?: string | null;
+    scheduledEndDate?: string | null;
+    odometerKm?: number;
+    nextDueDate?: string | null;
+    nextDueOdometerKm?: number | null;
+    laborCostMinor?: number;
+    partsCostMinor?: number;
+    partsUsed?: MaintenancePartInput[];
+    technicianName?: string | null;
+    notes?: string | null;
+    blockVehicle?: boolean;
+    recordInFinance?: boolean;
+    financeCategory?: 'MAINTENANCE' | 'REPAIRS';
+    financeExpenseScope?: 'TOTAL' | 'LABOR_ONLY';
+    paymentMethod?: PaymentMethod;
+    paymentReference?: string | null;
+    invoiceDoc?: {
+      originalFileName: string;
+      mimeType: 'image/jpeg' | 'image/png' | 'image/webp' | 'application/pdf';
+      base64Data: string;
+    } | null;
+  }) =>
+    callBackend<MaintenanceRecordDetailDto>(
+      IPC_CHANNELS.MAINTENANCE_UPDATE,
+      'PATCH',
+      `${PREVIEW_ENDPOINTS.MAINTENANCE}/${payload.recordId}`,
+      payload
+    ),
+
+  readMaintenanceInvoice: (recordId: number) =>
+    callBackend<{ id: number; originalFileName: string; mimeType: string; base64Data: string }>(
+      IPC_CHANNELS.MAINTENANCE_READ_INVOICE,
+      'GET',
+      `${PREVIEW_ENDPOINTS.MAINTENANCE}/${recordId}/invoice`,
+      { recordId }
+    ),
+
+  listOperationalAlerts: (filters?: {
+    includeResolved?: boolean;
+    category?: string;
+    severity?: NotificationSeverity | 'ALL';
+    vehicleId?: number;
+  }) =>
+    callBackend<AppNotificationDto[]>(
+      IPC_CHANNELS.NOTIFICATIONS_LIST,
+      'GET',
+      `${PREVIEW_ENDPOINTS.NOTIFICATIONS}${buildQuery({
+        includeResolved: filters?.includeResolved ? 'true' : undefined,
+        category: filters?.category,
+        severity: filters?.severity,
+        vehicleId: filters?.vehicleId ? String(filters.vehicleId) : undefined,
+      })}`,
+      filters
+    ),
+
+  syncOperationalAlerts: (referenceDate?: string) =>
+    callBackend<AppNotificationDto[]>(
+      IPC_CHANNELS.NOTIFICATIONS_SYNC_ALERTS,
+      'POST',
+      `${PREVIEW_ENDPOINTS.NOTIFICATIONS}/sync`,
+      { referenceDate }
+    ),
+
+  markOperationalAlertRead: (alertId: number) =>
+    callBackend<AppNotificationDto>(
+      IPC_CHANNELS.NOTIFICATIONS_MARK_READ,
+      'POST',
+      `${PREVIEW_ENDPOINTS.NOTIFICATIONS}/${alertId}/read`,
+      { alertId }
+    ),
+
+  resolveOperationalAlert: (alertId: number) =>
+    callBackend<AppNotificationDto>(
+      IPC_CHANNELS.NOTIFICATIONS_RESOLVE,
+      'POST',
+      `${PREVIEW_ENDPOINTS.NOTIFICATIONS}/${alertId}/resolve`,
+      { alertId }
+    ),
+
+  // Phase 4 Step 3: Spare Parts Inventory
+  getInventoryOverview: () =>
+    callBackend<InventoryOverviewDto>(
+      IPC_CHANNELS.INVENTORY_OVERVIEW,
+      'GET',
+      `${PREVIEW_ENDPOINTS.INVENTORY}/overview`
+    ),
+
+  listInventoryParts: (filters?: {
+    category?: string;
+    supplierId?: number;
+    stockState?: 'ALL' | 'LOW' | 'OUT' | 'IN_STOCK';
+    includeArchived?: boolean;
+    search?: string;
+  }) =>
+    callBackend<InventoryPartListItemDto[]>(
+      IPC_CHANNELS.INVENTORY_LIST,
+      'GET',
+      `${PREVIEW_ENDPOINTS.INVENTORY}/parts${buildQuery({
+        category: filters?.category,
+        supplierId: filters?.supplierId ? String(filters.supplierId) : undefined,
+        stockState: filters?.stockState,
+        includeArchived: filters?.includeArchived ? 'true' : undefined,
+        search: filters?.search,
+      })}`,
+      filters
+    ),
+
+  getInventoryPartDetail: (partId: number) =>
+    callBackend<InventoryPartDetailDto>(
+      IPC_CHANNELS.INVENTORY_GET,
+      'GET',
+      `${PREVIEW_ENDPOINTS.INVENTORY}/parts/${partId}`,
+      { partId }
+    ),
+
+  upsertInventoryPart: (payload: {
+    id?: number;
+    partCode: string;
+    partName: string;
+    category: string;
+    description?: string | null;
+    unitLabel?: string;
+    compatibleModels?: string | null;
+    minimumStock: number;
+    unitPurchasePriceMinor: number;
+    supplierId?: number | null;
+    storageLocation?: string | null;
+    initialStock?: number;
+    isArchived?: boolean;
+  }) =>
+    callBackend<InventoryPartDetailDto>(
+      IPC_CHANNELS.INVENTORY_UPSERT_PART,
+      'POST',
+      `${PREVIEW_ENDPOINTS.INVENTORY}/parts`,
+      payload
+    ),
+
+  archiveInventoryPart: (partId: number, archived = true) =>
+    callBackend<InventoryPartDetailDto>(
+      IPC_CHANNELS.INVENTORY_ARCHIVE_PART,
+      'POST',
+      `${PREVIEW_ENDPOINTS.INVENTORY}/parts/${partId}/archive`,
+      { partId, archived }
+    ),
+
+  listInventoryMovements: (filters?: {
+    partId?: number;
+    movementType?: InventoryMovementType | 'ALL';
+    vehicleId?: number;
+    supplierId?: number;
+    dateFrom?: string;
+    dateTo?: string;
+    search?: string;
+    limit?: number;
+  }) =>
+    callBackend<InventoryMovementListItemDto[]>(
+      IPC_CHANNELS.INVENTORY_MOVEMENTS_LIST,
+      'GET',
+      `${PREVIEW_ENDPOINTS.INVENTORY}/movements${buildQuery({
+        partId: filters?.partId ? String(filters.partId) : undefined,
+        movementType: filters?.movementType,
+        vehicleId: filters?.vehicleId ? String(filters.vehicleId) : undefined,
+        supplierId: filters?.supplierId ? String(filters.supplierId) : undefined,
+        dateFrom: filters?.dateFrom,
+        dateTo: filters?.dateTo,
+        search: filters?.search,
+        limit: filters?.limit ? String(filters.limit) : undefined,
+      })}`,
+      filters
+    ),
+
+  recordInventoryMovement: (payload: {
+    partId: number;
+    movementType: 'PURCHASE' | 'ENTRY' | 'WITHDRAWAL' | 'RETURN';
+    quantity: number;
+    unitCostMinor?: number;
+    supplierId?: number | null;
+    vehicleId?: number | null;
+    maintenanceRecordId?: number | null;
+    referenceCode?: string | null;
+    movementDate?: string;
+    notes?: string | null;
+    recordInFinance?: boolean;
+    paymentMethod?: PaymentMethod;
+    paymentReference?: string | null;
+  }) =>
+    callBackend<{ movement: InventoryMovementListItemDto; part: InventoryPartListItemDto }>(
+      IPC_CHANNELS.INVENTORY_RECORD_MOVEMENT,
+      'POST',
+      `${PREVIEW_ENDPOINTS.INVENTORY}/movements`,
+      payload
+    ),
+
+  adjustInventoryStock: (payload: {
+    partId: number;
+    quantityDelta: number;
+    overrideReason: string;
+    notes?: string | null;
+    movementDate?: string;
+  }) =>
+    callBackend<{ movement: InventoryMovementListItemDto; part: InventoryPartListItemDto }>(
+      IPC_CHANNELS.INVENTORY_ADJUST_STOCK,
+      'POST',
+      `${PREVIEW_ENDPOINTS.INVENTORY}/adjust`,
+      payload
     ),
 };

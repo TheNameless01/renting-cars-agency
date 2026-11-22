@@ -259,13 +259,19 @@ export const CreateCustomerAdjustmentSchema = z.object({
 });
 
 export const CreateSupplierSchema = z.object({
+  id: z.number().int().positive().optional(),
   name: z.string().trim().min(2).max(160),
   phone: z.string().trim().max(40).nullable().optional(),
+  email: z.string().trim().max(120).nullable().optional(),
   address: z.string().trim().max(255).nullable().optional(),
+  wilayaCode: z.string().trim().max(10).nullable().optional(),
   specialty: z.string().trim().max(120).nullable().optional(),
   nifNumber: z.string().trim().max(64).nullable().optional(),
   notes: z.string().trim().max(500).nullable().optional(),
+  isArchived: z.boolean().optional(),
 });
+
+export const UpsertSupplierSchema = CreateSupplierSchema;
 
 export const CreateExpenseSchema = z.object({
   category: z.enum([
@@ -425,4 +431,214 @@ export const CompleteContractSchema = z.object({
   otherChargesMinor: z.number().int().min(0).default(0),
   notes: z.string().max(1000).nullable().optional(),
 });
+
+// Phase 4 Step 1: Vehicle Inspections & Damage Management
+export const InspectionItemInputSchema = z.object({
+  itemKey: z.string().trim().min(1).max(80),
+  category: z.string().trim().min(1).max(40).default('GENERAL'),
+  labelFr: z.string().trim().min(1).max(200),
+  labelAr: z.string().trim().min(1).max(200),
+  condition: z.enum(['GOOD', 'DAMAGED', 'MISSING']),
+  notes: z.string().trim().max(500).nullable().optional(),
+  sortOrder: z.number().int().min(0).default(0),
+});
+
+export const InspectionDamageInputSchema = z.object({
+  zoneCode: z.string().trim().min(1).max(60),
+  diagramX: z.number().min(0).max(100).nullable().optional(),
+  diagramY: z.number().min(0).max(100).nullable().optional(),
+  damageType: z.enum(['SCRATCH', 'DENT', 'CRACK', 'BROKEN', 'MISSING_ACCESSORY', 'OTHER']),
+  severity: z.enum(['MINOR', 'MODERATE', 'MAJOR', 'CRITICAL']),
+  description: z.string().trim().min(2).max(1000),
+  isPreExisting: z.boolean().optional(),
+  isNewlyDiscovered: z.boolean().optional(),
+  estimatedRepairCostMinor: z.number().int().min(0).nullable().optional(),
+});
+
+export const CreateInspectionSchema = z.object({
+  contractId: z.number().int().positive(),
+  stage: z.enum(['DEPARTURE', 'RETURN']),
+  odometerKm: z.number().int().min(0),
+  fuelLevelPercent: z.number().int().min(0).max(100),
+  exteriorNotes: z.string().trim().max(2000).nullable().optional(),
+  interiorNotes: z.string().trim().max(2000).nullable().optional(),
+  agencySignatureData: z.string().max(500_000).nullable().optional(),
+  customerSignatureData: z.string().max(500_000).nullable().optional(),
+  customerAcknowledged: z.boolean().default(false),
+  customerAcknowledgmentNotes: z.string().trim().max(1000).nullable().optional(),
+  inspectedAt: z.string().min(10).optional(),
+  finalizeNow: z.boolean().default(false),
+  items: z.array(InspectionItemInputSchema).min(1).optional(),
+  damages: z.array(InspectionDamageInputSchema).optional(),
+});
+
+export const UpdateInspectionDraftSchema = z.object({
+  inspectionId: z.number().int().positive(),
+  odometerKm: z.number().int().min(0).optional(),
+  fuelLevelPercent: z.number().int().min(0).max(100).optional(),
+  exteriorNotes: z.string().trim().max(2000).nullable().optional(),
+  interiorNotes: z.string().trim().max(2000).nullable().optional(),
+  agencySignatureData: z.string().max(500_000).nullable().optional(),
+  customerSignatureData: z.string().max(500_000).nullable().optional(),
+  customerAcknowledged: z.boolean().optional(),
+  customerAcknowledgmentNotes: z.string().trim().max(1000).nullable().optional(),
+  inspectedAt: z.string().min(10).optional(),
+  items: z.array(InspectionItemInputSchema).min(1).optional(),
+});
+
+export const UploadInspectionPhotoSchema = z.object({
+  inspectionId: z.number().int().positive(),
+  damageId: z.number().int().positive().nullable().optional(),
+  originalFileName: z.string().trim().min(1).max(200),
+  mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp']),
+  base64Data: z.string().min(4).max(8_000_000),
+  caption: z.string().trim().max(300).nullable().optional(),
+});
+
+export const AddVehicleDamageSchema = InspectionDamageInputSchema.extend({
+  vehicleId: z.number().int().positive(),
+  contractId: z.number().int().positive().nullable().optional(),
+  inspectionId: z.number().int().positive().nullable().optional(),
+});
+
+export const UpdateDamageStatusSchema = z.object({
+  damageId: z.number().int().positive(),
+  newStatus: z.enum(['REPORTED', 'UNDER_REVIEW', 'CONFIRMED', 'UNDER_REPAIR', 'REPAIRED', 'REJECTED']),
+  notes: z.string().trim().min(2).max(1000),
+  estimatedRepairCostMinor: z.number().int().min(0).nullable().optional(),
+  repairReference: z.string().trim().max(120).nullable().optional(),
+  linkedExpenseId: z.number().int().positive().nullable().optional(),
+});
+
+// Phase 4 Step 2: Maintenance Management & Alerts
+export const UpsertMaintenanceTypeSchema = z.object({
+  id: z.number().int().positive().optional(),
+  code: z.string().trim().min(2).max(50),
+  nameFr: z.string().trim().min(2).max(150),
+  nameAr: z.string().trim().min(2).max(150),
+  defaultKmInterval: z.number().int().positive().nullable().optional(),
+  defaultDayInterval: z.number().int().positive().nullable().optional(),
+  kmWarningThreshold: z.number().int().min(0).default(1000),
+  dayWarningThreshold: z.number().int().min(0).default(14),
+  isActive: z.boolean().default(true),
+});
+
+export const UpsertVehicleMaintenanceScheduleSchema = z.object({
+  vehicleId: z.number().int().positive(),
+  maintenanceTypeId: z.number().int().positive(),
+  kmInterval: z.number().int().positive().nullable().optional(),
+  dayInterval: z.number().int().positive().nullable().optional(),
+  kmWarningThreshold: z.number().int().min(0).default(1000),
+  dayWarningThreshold: z.number().int().min(0).default(14),
+  isActive: z.boolean().default(true),
+  notes: z.string().trim().max(500).nullable().optional(),
+});
+
+export const MaintenanceDocUploadSchema = z.object({
+  originalFileName: z.string().trim().min(1).max(200),
+  mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']),
+  base64Data: z.string().min(4).max(12_000_000),
+});
+
+export const MaintenancePartUsageSchema = z.object({
+  partId: z.number().int().positive(),
+  quantityUsed: z.number().int().positive(),
+  unitCostMinor: z.number().int().min(0).optional(),
+});
+
+export const CreateMaintenanceRecordSchema = z.object({
+  vehicleId: z.number().int().positive(),
+  maintenanceTypeId: z.number().int().positive(),
+  supplierId: z.number().int().positive().nullable().optional(),
+  status: z.enum(['SCHEDULED', 'IN_PROGRESS', 'COMPLETED']).default('COMPLETED'),
+  isEmergency: z.boolean().default(false),
+  workDescription: z.string().trim().min(3).max(2000),
+  performedDate: z.string().min(10).max(30),
+  scheduledStartDate: z.string().min(10).max(30).nullable().optional(),
+  scheduledEndDate: z.string().min(10).max(30).nullable().optional(),
+  odometerKm: z.number().int().min(0),
+  nextDueDate: z.string().min(10).max(30).nullable().optional(),
+  nextDueOdometerKm: z.number().int().min(0).nullable().optional(),
+  laborCostMinor: z.number().int().min(0).default(0),
+  partsCostMinor: z.number().int().min(0).default(0),
+  partsUsed: z.array(MaintenancePartUsageSchema).optional(),
+  technicianName: z.string().trim().max(120).nullable().optional(),
+  notes: z.string().trim().max(2000).nullable().optional(),
+  blockVehicle: z.boolean().default(false),
+  recordInFinance: z.boolean().default(false),
+  financeCategory: z.enum(['MAINTENANCE', 'REPAIRS']).default('MAINTENANCE'),
+  financeExpenseScope: z.enum(['TOTAL', 'LABOR_ONLY']).default('TOTAL'),
+  paymentMethod: z.enum(['CASH', 'CCP', 'BARIDIMOB', 'BANK_TRANSFER', 'OTHER']).default('CASH'),
+  paymentReference: z.string().trim().max(120).nullable().optional(),
+  invoiceDoc: MaintenanceDocUploadSchema.nullable().optional(),
+});
+
+export const UpdateMaintenanceRecordSchema = z.object({
+  recordId: z.number().int().positive(),
+  status: z.enum(['SCHEDULED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED']).optional(),
+  supplierId: z.number().int().positive().nullable().optional(),
+  workDescription: z.string().trim().min(3).max(2000).optional(),
+  performedDate: z.string().min(10).max(30).optional(),
+  scheduledStartDate: z.string().min(10).max(30).nullable().optional(),
+  scheduledEndDate: z.string().min(10).max(30).nullable().optional(),
+  odometerKm: z.number().int().min(0).optional(),
+  nextDueDate: z.string().min(10).max(30).nullable().optional(),
+  nextDueOdometerKm: z.number().int().min(0).nullable().optional(),
+  laborCostMinor: z.number().int().min(0).optional(),
+  partsCostMinor: z.number().int().min(0).optional(),
+  partsUsed: z.array(MaintenancePartUsageSchema).optional(),
+  technicianName: z.string().trim().max(120).nullable().optional(),
+  notes: z.string().trim().max(2000).nullable().optional(),
+  blockVehicle: z.boolean().optional(),
+  recordInFinance: z.boolean().optional(),
+  financeCategory: z.enum(['MAINTENANCE', 'REPAIRS']).optional(),
+  financeExpenseScope: z.enum(['TOTAL', 'LABOR_ONLY']).optional(),
+  paymentMethod: z.enum(['CASH', 'CCP', 'BARIDIMOB', 'BANK_TRANSFER', 'OTHER']).optional(),
+  paymentReference: z.string().trim().max(120).nullable().optional(),
+  invoiceDoc: MaintenanceDocUploadSchema.nullable().optional(),
+});
+
+// Phase 4 Step 3: Spare Parts Inventory
+export const UpsertInventoryPartSchema = z.object({
+  id: z.number().int().positive().optional(),
+  partCode: z.string().trim().min(2).max(60),
+  partName: z.string().trim().min(2).max(160),
+  category: z.string().trim().min(2).max(80),
+  description: z.string().trim().max(1000).nullable().optional(),
+  unitLabel: z.string().trim().min(1).max(30).default('PIECE'),
+  compatibleModels: z.string().trim().max(300).nullable().optional(),
+  minimumStock: z.number().int().min(0).default(1),
+  unitPurchasePriceMinor: z.number().int().min(0).default(0),
+  supplierId: z.number().int().positive().nullable().optional(),
+  storageLocation: z.string().trim().max(120).nullable().optional(),
+  initialStock: z.number().int().min(0).optional(),
+  isArchived: z.boolean().optional(),
+});
+
+export const RecordInventoryMovementSchema = z.object({
+  partId: z.number().int().positive(),
+  movementType: z.enum(['PURCHASE', 'ENTRY', 'WITHDRAWAL', 'RETURN']),
+  quantity: z.number().int().positive(),
+  unitCostMinor: z.number().int().min(0).optional(),
+  supplierId: z.number().int().positive().nullable().optional(),
+  vehicleId: z.number().int().positive().nullable().optional(),
+  maintenanceRecordId: z.number().int().positive().nullable().optional(),
+  referenceCode: z.string().trim().max(100).nullable().optional(),
+  movementDate: z.string().min(8).max(30).optional(),
+  notes: z.string().trim().max(500).nullable().optional(),
+  recordInFinance: z.boolean().default(false),
+  paymentMethod: z.enum(['CASH', 'CCP', 'BARIDIMOB', 'BANK_TRANSFER', 'OTHER']).default('CASH'),
+  paymentReference: z.string().trim().max(120).nullable().optional(),
+});
+
+export const AdjustInventoryStockSchema = z.object({
+  partId: z.number().int().positive(),
+  quantityDelta: z.number().int().refine((n) => n !== 0, 'La quantité d’ajustement ne peut pas être zéro'),
+  overrideReason: z.string().trim().min(3).max(500),
+  notes: z.string().trim().max(500).nullable().optional(),
+  movementDate: z.string().min(8).max(30).optional(),
+});
+
+
+
 

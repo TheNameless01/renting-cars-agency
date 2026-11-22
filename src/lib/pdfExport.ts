@@ -1,5 +1,10 @@
+import { getDiagramZoneLabel } from '../../shared/constants/inspections.ts';
 import type { AppLanguage, CurrencyCode, NumeralSystem } from '../../shared/types/domain.ts';
-import type { FinancialDashboardReportDto, PaymentReceiptDto } from './apiClient.ts';
+import type {
+  FinancialDashboardReportDto,
+  InspectionPdfPayloadDto,
+  PaymentReceiptDto,
+} from './apiClient.ts';
 import { formatCurrencyMinor, formatDateTimeAlgiers, formatDigits } from './formatters.ts';
 
 export function downloadBlobFile(fileName: string, blob: Blob): void {
@@ -875,3 +880,698 @@ export function exportFinancialReportPdf(
   const blob = buildPdfFromCanvases(pages);
   downloadBlobFile(`rapport-financier-${report.dateFrom}_${report.dateTo}.pdf`, blob);
 }
+
+async function loadImageSafe(dataUrl: string | null | undefined): Promise<HTMLImageElement | null> {
+  if (!dataUrl || typeof Image === 'undefined') return null;
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
+}
+
+function conditionLabel(cond: string | null, lang: AppLanguage): string {
+  if (!cond) return '—';
+  if (lang === 'ar') {
+    if (cond === 'GOOD') return 'جيد';
+    if (cond === 'DAMAGED') return 'متضرر';
+    if (cond === 'MISSING') return 'مفقود';
+    return cond;
+  }
+  if (cond === 'GOOD') return 'Bon état';
+  if (cond === 'DAMAGED') return 'Endommagé';
+  if (cond === 'MISSING') return 'Manquant';
+  return cond;
+}
+
+function damageTypeLabel(type: string, lang: AppLanguage): string {
+  const mapFr: Record<string, string> = {
+    SCRATCH: 'Rayure',
+    DENT: 'Bosse / Enfoncement',
+    CRACK: 'Fissure',
+    BROKEN: 'Cassé / Hors service',
+    MISSING_ACCESSORY: 'Accessoire manquant',
+    OTHER: 'Autre',
+  };
+  const mapAr: Record<string, string> = {
+    SCRATCH: 'خدش',
+    DENT: 'انبعاج',
+    CRACK: 'شرخ / تشقق',
+    BROKEN: 'كسر / عطل',
+    MISSING_ACCESSORY: 'ملحق مفقود',
+    OTHER: 'أخرى',
+  };
+  return lang === 'ar' ? mapAr[type] || type : mapFr[type] || type;
+}
+
+function damageSeverityLabel(sev: string, lang: AppLanguage): string {
+  const mapFr: Record<string, string> = {
+    MINOR: 'Mineure',
+    MODERATE: 'Modérée',
+    MAJOR: 'Majeure',
+    CRITICAL: 'Critique',
+  };
+  const mapAr: Record<string, string> = {
+    MINOR: 'بسيطة',
+    MODERATE: 'متوسطة',
+    MAJOR: 'كبيرة',
+    CRITICAL: 'حرجة',
+  };
+  return lang === 'ar' ? mapAr[sev] || sev : mapFr[sev] || sev;
+}
+
+export async function exportInspectionPdf(
+  payload: InspectionPdfPayloadDto,
+  lang: AppLanguage,
+  numerals: NumeralSystem
+): Promise<void> {
+  const isAr = lang === 'ar';
+  const contentW = A4_W - MARGIN_X * 2;
+  const startX = isAr ? A4_W - MARGIN_X : MARGIN_X;
+  const endX = isAr ? MARGIN_X : A4_W - MARGIN_X;
+
+  const pages: HTMLCanvasElement[] = [];
+  let page = createA4Page(lang);
+  pages.push(page.canvas);
+
+  const stageTitle =
+    payload.inspection.stage === 'DEPARTURE'
+      ? isAr
+        ? 'محضر معاينة المركبة — عند الانطلاق'
+        : 'ÉTAT DES LIEUX VÉHICULE — DÉPART'
+      : isAr
+      ? 'محضر معاينة المركبة — عند الإرجاع'
+      : 'ÉTAT DES LIEUX VÉHICULE — RETOUR';
+
+  const drawHeader = (ctx: CanvasRenderingContext2D, pageNo: number) => {
+    ctx.fillStyle = payload.inspection.stage === 'DEPARTURE' ? '#1e3a8a' : '#0f766e';
+    ctx.fillRect(0, 0, A4_W, 136);
+    drawAlignedText(ctx, stageTitle, startX, 32, 'start', `700 26px ${FONT_FAMILY}`, '#ffffff', 760);
+    drawAlignedText(
+      ctx,
+      `${payload.agency.name}${payload.agency.phone ? ` · ${formatDigits(payload.agency.phone, numerals)}` : ''}`,
+      startX,
+      78,
+      'start',
+      `500 17px ${FONT_FAMILY}`,
+      '#cbd5e1',
+      760
+    );
+    drawAlignedText(
+      ctx,
+      payload.inspection.inspectionNumber,
+      endX,
+      36,
+      'end',
+      `700 22px ${FONT_FAMILY}`,
+      '#ffffff'
+    );
+    drawAlignedText(
+      ctx,
+      `${isAr ? 'صفحة' : 'Page'} ${formatDigits(pageNo, numerals)}`,
+      endX,
+      78,
+      'end',
+      `500 16px ${FONT_FAMILY}`,
+      '#cbd5e1'
+    );
+  };
+
+  drawHeader(page.ctx, 1);
+  let y = 164;
+
+  const ensureSpace = (needed: number) => {
+    if (y + needed > A4_H - 96) {
+      page = createA4Page(lang);
+      pages.push(page.canvas);
+      drawHeader(page.ctx, pages.length);
+      y = 164;
+    }
+  };
+
+  // Info Card: Contract, Vehicle, Customer, Telemetry
+  page.ctx.fillStyle = '#f8fafc';
+  page.ctx.fillRect(MARGIN_X, y, contentW, 210);
+  page.ctx.strokeStyle = '#cbd5e1';
+  page.ctx.lineWidth = 1.5;
+  page.ctx.strokeRect(MARGIN_X, y, contentW, 210);
+
+  const leftColStart = isAr ? A4_W - MARGIN_X - 24 : MARGIN_X + 24;
+  const rightColStart = isAr ? A4_W / 2 - 20 : A4_W / 2 + 20;
+
+  const metaLeft: Array<[string, string]> = [
+    [isAr ? 'رقم العقد' : 'Contrat', payload.contract.contractNumber],
+    [
+      isAr ? 'المركبة' : 'Véhicule',
+      `${payload.vehicle.brand} ${payload.vehicle.model} (${formatDigits(payload.vehicle.matricule, numerals)})`,
+    ],
+    [isAr ? 'الزبون' : 'Client', `${payload.customer.fullName} · ${formatDigits(payload.customer.phone, numerals)}`],
+    [isAr ? 'المعاين' : 'Inspecteur', payload.inspection.inspectorName],
+  ];
+
+  const metaRight: Array<[string, string]> = [
+    [isAr ? 'تاريخ المعاينة' : 'Date inspection', formatDateTimeAlgiers(payload.inspection.inspectedAt, lang, numerals)],
+    [isAr ? 'عداد المسافة' : 'Kilométrage', `${formatDigits(payload.inspection.odometerKm.toLocaleString(), numerals)} km`],
+    [isAr ? 'مستوى الوقود' : 'Niveau carburant', `${formatDigits(payload.inspection.fuelLevelPercent, numerals)}%`],
+    [
+      isAr ? 'الحالة' : 'Statut',
+      payload.inspection.status === 'FINALIZED'
+        ? isAr
+          ? 'معتمد نهائياً'
+          : 'Finalisé et verrouillé'
+        : isAr
+        ? 'مسودة'
+        : 'Brouillon',
+    ],
+  ];
+
+  metaLeft.forEach(([lbl, val], idx) => {
+    const ry = y + 20 + idx * 46;
+    drawAlignedText(page.ctx, lbl, leftColStart, ry, 'start', `600 15px ${FONT_FAMILY}`, '#64748b', 180);
+    drawAlignedText(page.ctx, val, leftColStart, ry + 19, 'start', `700 17px ${FONT_FAMILY}`, '#0f172a', 490);
+  });
+
+  metaRight.forEach(([lbl, val], idx) => {
+    const ry = y + 20 + idx * 46;
+    drawAlignedText(page.ctx, lbl, rightColStart, ry, 'start', `600 15px ${FONT_FAMILY}`, '#64748b', 200);
+    drawAlignedText(page.ctx, val, rightColStart, ry + 19, 'start', `700 17px ${FONT_FAMILY}`, '#0f172a', 480);
+  });
+  y += 236;
+
+  // Return metrics highlight if RETURN
+  if (payload.inspection.stage === 'RETURN') {
+    page.ctx.fillStyle = '#f0fdfa';
+    page.ctx.fillRect(MARGIN_X, y, contentW, 56);
+    page.ctx.strokeStyle = '#99f6e4';
+    page.ctx.strokeRect(MARGIN_X, y, contentW, 56);
+    const deltaKmText =
+      payload.inspection.mileageDeltaKm != null
+        ? `${formatDigits(payload.inspection.mileageDeltaKm.toLocaleString(), numerals)} km`
+        : '—';
+    const lateText =
+      payload.inspection.lateReturnMinutes > 0
+        ? `${formatDigits(payload.inspection.lateReturnMinutes, numerals)} min`
+        : isAr
+        ? 'في الوقت'
+        : 'À l’heure';
+    drawAlignedText(
+      page.ctx,
+      `${isAr ? 'المسافة المقطوعة:' : 'Distance parcourue:'} ${deltaKmText}   ·   ${isAr ? 'التأخير:' : 'Retard:'} ${lateText}`,
+      startX + (isAr ? -20 : 20),
+      y + 17,
+      'start',
+      `700 17px ${FONT_FAMILY}`,
+      '#0f766e',
+      contentW - 40
+    );
+    y += 78;
+  }
+
+  // Checklist section
+  ensureSpace(120);
+  drawAlignedText(
+    page.ctx,
+    isAr ? '1. قائمة الفحص التفصيلية' : '1. Grille de contrôle détaillée',
+    startX,
+    y,
+    'start',
+    `700 20px ${FONT_FAMILY}`,
+    '#0f172a'
+  );
+  y += 34;
+
+  const drawChecklistHeader = () => {
+    page.ctx.fillStyle = '#e2e8f0';
+    page.ctx.fillRect(MARGIN_X, y, contentW, 38);
+    const c0 = isAr ? A4_W - MARGIN_X - 16 : MARGIN_X + 16;
+    const c1 = isAr ? A4_W - MARGIN_X - 540 : MARGIN_X + 540;
+    const c2 = isAr ? A4_W - MARGIN_X - 730 : MARGIN_X + 730;
+    drawAlignedText(page.ctx, isAr ? 'العنصر' : 'Élément contrôlé', c0, y + 10, 'start', `700 15px ${FONT_FAMILY}`, '#334155');
+    drawAlignedText(page.ctx, isAr ? 'الحالة' : 'État', c1, y + 10, 'start', `700 15px ${FONT_FAMILY}`, '#334155');
+    drawAlignedText(page.ctx, isAr ? 'ملاحظات' : 'Observations', c2, y + 10, 'start', `700 15px ${FONT_FAMILY}`, '#334155');
+    y += 38;
+  };
+
+  drawChecklistHeader();
+  for (const item of payload.items) {
+    if (y + 38 > A4_H - 96) {
+      page = createA4Page(lang);
+      pages.push(page.canvas);
+      drawHeader(page.ctx, pages.length);
+      y = 164;
+      drawChecklistHeader();
+    }
+    page.ctx.strokeStyle = '#e2e8f0';
+    page.ctx.lineWidth = 1;
+    page.ctx.strokeRect(MARGIN_X, y, contentW, 36);
+    const c0 = isAr ? A4_W - MARGIN_X - 16 : MARGIN_X + 16;
+    const c1 = isAr ? A4_W - MARGIN_X - 540 : MARGIN_X + 540;
+    const c2 = isAr ? A4_W - MARGIN_X - 730 : MARGIN_X + 730;
+    const condColor =
+      item.condition === 'GOOD' ? '#047857' : item.condition === 'DAMAGED' ? '#b45309' : '#b91c1c';
+    drawAlignedText(
+      page.ctx,
+      isAr ? item.labelAr : item.labelFr,
+      c0,
+      y + 9,
+      'start',
+      `500 15px ${FONT_FAMILY}`,
+      '#0f172a',
+      500
+    );
+    drawAlignedText(
+      page.ctx,
+      conditionLabel(item.condition, lang),
+      c1,
+      y + 9,
+      'start',
+      `700 15px ${FONT_FAMILY}`,
+      condColor,
+      170
+    );
+    drawAlignedText(page.ctx, item.notes || '—', c2, y + 9, 'start', `400 14px ${FONT_FAMILY}`, '#475569', 330);
+    y += 36;
+  }
+  y += 28;
+
+  // Damages Section
+  ensureSpace(120);
+  drawAlignedText(
+    page.ctx,
+    isAr
+      ? `2. الأضرار والملاحظات المسجلة (${formatDigits(payload.damages.length, numerals)})`
+      : `2. Dommages relevés (${formatDigits(payload.damages.length, numerals)})`,
+    startX,
+    y,
+    'start',
+    `700 20px ${FONT_FAMILY}`,
+    '#0f172a'
+  );
+  y += 34;
+
+  if (payload.damages.length === 0) {
+    drawAlignedText(
+      page.ctx,
+      isAr ? 'لم يتم تسجيل أي ضرر خلال هذه المعاينة.' : 'Aucun dommage signalé lors de cet état des lieux.',
+      startX,
+      y,
+      'start',
+      `500 16px ${FONT_FAMILY}`,
+      '#047857'
+    );
+    y += 38;
+  } else {
+    for (const dmg of payload.damages) {
+      ensureSpace(74);
+      page.ctx.fillStyle = dmg.isNewlyDiscovered ? '#fef2f2' : '#fffbeb';
+      page.ctx.fillRect(MARGIN_X, y, contentW, 64);
+      page.ctx.strokeStyle = dmg.isNewlyDiscovered ? '#fecaca' : '#fde68a';
+      page.ctx.strokeRect(MARGIN_X, y, contentW, 64);
+
+      const zoneLbl = getDiagramZoneLabel(dmg.zoneCode, lang);
+      const badge = dmg.isNewlyDiscovered
+        ? isAr
+          ? 'ضرر جديد'
+          : 'NOUVEAU'
+        : isAr
+        ? 'مسجل سابقاً'
+        : 'PRÉEXISTANT';
+      drawAlignedText(
+        page.ctx,
+        `${dmg.damageCode} · ${zoneLbl} · ${damageTypeLabel(dmg.damageType, lang)} (${damageSeverityLabel(dmg.severity, lang)}) [${badge}]`,
+        startX + (isAr ? -16 : 16),
+        y + 10,
+        'start',
+        `700 15px ${FONT_FAMILY}`,
+        '#0f172a',
+        contentW - 32
+      );
+      drawAlignedText(
+        page.ctx,
+        dmg.description,
+        startX + (isAr ? -16 : 16),
+        y + 36,
+        'start',
+        `400 14px ${FONT_FAMILY}`,
+        '#334155',
+        contentW - 32
+      );
+      y += 72;
+    }
+  }
+
+  // Notes
+  if (payload.inspection.exteriorNotes || payload.inspection.interiorNotes) {
+    ensureSpace(90);
+    drawAlignedText(
+      page.ctx,
+      isAr ? 'ملاحظات عامة:' : 'Observations générales :',
+      startX,
+      y,
+      'start',
+      `700 17px ${FONT_FAMILY}`,
+      '#0f172a'
+    );
+    y += 28;
+    const combined = [payload.inspection.exteriorNotes, payload.inspection.interiorNotes]
+      .filter(Boolean)
+      .join(' | ');
+    drawAlignedText(page.ctx, combined, startX, y, 'start', `400 15px ${FONT_FAMILY}`, '#334155', contentW);
+    y += 38;
+  }
+
+  // Embedded Encrypted Photos (decrypted in memory for report)
+  if (payload.photos.length > 0) {
+    ensureSpace(260);
+    drawAlignedText(
+      page.ctx,
+      isAr
+        ? `3. الصور المرفقة (${formatDigits(payload.photos.length, numerals)})`
+        : `3. Photographies jointes (${formatDigits(payload.photos.length, numerals)})`,
+      startX,
+      y,
+      'start',
+      `700 20px ${FONT_FAMILY}`,
+      '#0f172a'
+    );
+    y += 34;
+
+    const thumbW = 330;
+    const thumbH = 210;
+    const gap = 25;
+    for (let i = 0; i < payload.photos.length; i += 3) {
+      ensureSpace(thumbH + 44);
+      for (let c = 0; c < 3 && i + c < payload.photos.length; c++) {
+        const photo = payload.photos[i + c];
+        const px = isAr
+          ? A4_W - MARGIN_X - thumbW - c * (thumbW + gap)
+          : MARGIN_X + c * (thumbW + gap);
+        page.ctx.strokeStyle = '#cbd5e1';
+        page.ctx.strokeRect(px, y, thumbW, thumbH);
+        const img = await loadImageSafe(photo.dataUrl);
+        if (img) {
+          page.ctx.drawImage(img, px + 4, y + 4, thumbW - 8, thumbH - 36);
+        }
+        drawAlignedText(
+          page.ctx,
+          photo.caption || photo.originalFileName || `Photo ${i + c + 1}`,
+          px + (isAr ? thumbW - 8 : 8),
+          y + thumbH - 26,
+          'start',
+          `500 13px ${FONT_FAMILY}`,
+          '#334155',
+          thumbW - 16
+        );
+      }
+      y += thumbH + 22;
+    }
+  }
+
+  // Signatures & Acknowledgment Block
+  ensureSpace(210);
+  y += 12;
+  drawAlignedText(
+    page.ctx,
+    payload.inspection.customerAcknowledged
+      ? isAr
+        ? 'إقرار الزبون: أقرّ بصحة المعاينة المسجلة أعلاه.'
+        : 'Approbation client : Le locataire reconnaît l’exactitude du présent état des lieux.'
+      : isAr
+      ? 'إقرار الزبون: قيد التأكيد.'
+      : 'Approbation client : En attente de confirmation.',
+    startX,
+    y,
+    'start',
+    `600 15px ${FONT_FAMILY}`,
+    '#334155',
+    contentW
+  );
+  y += 32;
+
+  const boxW = contentW / 2 - 20;
+  const leftBoxX = MARGIN_X;
+  const rightBoxX = MARGIN_X + boxW + 40;
+
+  page.ctx.strokeStyle = '#94a3b8';
+  page.ctx.strokeRect(leftBoxX, y, boxW, 130);
+  page.ctx.strokeRect(rightBoxX, y, boxW, 130);
+
+  drawAlignedText(
+    page.ctx,
+    isAr ? 'توقيع الوكالة' : 'Signature Agence',
+    isAr ? leftBoxX + boxW - 16 : leftBoxX + 16,
+    y + 12,
+    'start',
+    `700 15px ${FONT_FAMILY}`,
+    '#334155'
+  );
+  drawAlignedText(
+    page.ctx,
+    isAr ? 'توقيع الزبون' : 'Signature Client',
+    isAr ? rightBoxX + boxW - 16 : rightBoxX + 16,
+    y + 12,
+    'start',
+    `700 15px ${FONT_FAMILY}`,
+    '#334155'
+  );
+
+  const agencySigImg = await loadImageSafe(payload.inspection.agencySignatureData);
+  if (agencySigImg) {
+    page.ctx.drawImage(agencySigImg, leftBoxX + 20, y + 36, boxW - 40, 84);
+  }
+  const customerSigImg = await loadImageSafe(payload.inspection.customerSignatureData);
+  if (customerSigImg) {
+    page.ctx.drawImage(customerSigImg, rightBoxX + 20, y + 36, boxW - 40, 84);
+  }
+
+  const blob = buildPdfFromCanvases(pages);
+  const stageFile = payload.inspection.stage === 'DEPARTURE' ? 'depart' : 'retour';
+  downloadBlobFile(`etat-des-lieux-${stageFile}-${payload.inspection.inspectionNumber}.pdf`, blob);
+}
+
+export async function exportDamageComparisonPdf(
+  payload: InspectionPdfPayloadDto,
+  lang: AppLanguage,
+  numerals: NumeralSystem
+): Promise<void> {
+  const comp = payload.comparison;
+  if (!comp) {
+    await exportInspectionPdf(payload, lang, numerals);
+    return;
+  }
+
+  const isAr = lang === 'ar';
+  const contentW = A4_W - MARGIN_X * 2;
+  const startX = isAr ? A4_W - MARGIN_X : MARGIN_X;
+  const endX = isAr ? MARGIN_X : A4_W - MARGIN_X;
+
+  const pages: HTMLCanvasElement[] = [];
+  let page = createA4Page(lang);
+  pages.push(page.canvas);
+
+  const drawHeader = (ctx: CanvasRenderingContext2D, pageNo: number) => {
+    ctx.fillStyle = '#7c2d12';
+    ctx.fillRect(0, 0, A4_W, 136);
+    drawAlignedText(
+      ctx,
+      isAr ? 'تقرير مقارنة المعاينة والأضرار (انطلاق / إرجاع)' : 'RAPPORT COMPARATIF DÉPART / RETOUR & DOMMAGES',
+      startX,
+      32,
+      'start',
+      `700 25px ${FONT_FAMILY}`,
+      '#ffffff',
+      820
+    );
+    drawAlignedText(
+      ctx,
+      `${payload.contract.contractNumber} · ${payload.vehicle.brand} ${payload.vehicle.model} (${formatDigits(payload.vehicle.matricule, numerals)})`,
+      startX,
+      78,
+      'start',
+      `500 17px ${FONT_FAMILY}`,
+      '#fed7aa',
+      820
+    );
+    drawAlignedText(
+      ctx,
+      `${isAr ? 'صفحة' : 'Page'} ${formatDigits(pageNo, numerals)}`,
+      endX,
+      54,
+      'end',
+      `600 16px ${FONT_FAMILY}`,
+      '#fed7aa'
+    );
+  };
+
+  drawHeader(page.ctx, 1);
+  let y = 164;
+  const ensureSpace = (needed: number) => {
+    if (y + needed > A4_H - 96) {
+      page = createA4Page(lang);
+      pages.push(page.canvas);
+      drawHeader(page.ctx, pages.length);
+      y = 164;
+    }
+  };
+
+  // Summary metrics
+  const cards = [
+    {
+      label: isAr ? 'المسافة المقطوعة' : 'Kilométrage parcouru',
+      val:
+        comp.odometerDeltaKm != null
+          ? `${formatDigits(comp.odometerDeltaKm.toLocaleString(), numerals)} km`
+          : '—',
+    },
+    {
+      label: isAr ? 'فارق الوقود' : 'Écart carburant',
+      val: comp.fuelDeltaPercent != null ? `${formatDigits(comp.fuelDeltaPercent, numerals)}%` : '—',
+    },
+    {
+      label: isAr ? 'عناصر متدهورة / مفقودة' : 'Éléments dégradés / manquants',
+      val: `${formatDigits(comp.degradedItemsCount, numerals)} / ${formatDigits(comp.missingAccessoriesCount, numerals)}`,
+    },
+    {
+      label: isAr ? 'أضرار جديدة مكتشفة' : 'Nouveaux dommages détectés',
+      val: formatDigits(comp.newlyDiscoveredDamages.length, numerals),
+    },
+  ];
+  const cardW = (contentW - 45) / 4;
+  cards.forEach((c, i) => {
+    const cx = isAr ? A4_W - MARGIN_X - cardW - i * (cardW + 15) : MARGIN_X + i * (cardW + 15);
+    page.ctx.fillStyle = '#f8fafc';
+    page.ctx.fillRect(cx, y, cardW, 92);
+    page.ctx.strokeStyle = '#cbd5e1';
+    page.ctx.strokeRect(cx, y, cardW, 92);
+    drawAlignedText(
+      page.ctx,
+      c.label,
+      isAr ? cx + cardW - 14 : cx + 14,
+      y + 14,
+      'start',
+      `600 13px ${FONT_FAMILY}`,
+      '#475569',
+      cardW - 28
+    );
+    drawAlignedText(
+      page.ctx,
+      c.val,
+      isAr ? cx + cardW - 14 : cx + 14,
+      y + 48,
+      'start',
+      `700 21px ${FONT_FAMILY}`,
+      '#0f172a',
+      cardW - 28
+    );
+  });
+  y += 118;
+
+  // Comparison checklist
+  drawAlignedText(
+    page.ctx,
+    isAr ? 'مقارنة نقاط الفحص (انطلاق مقابل إرجاع)' : 'Comparaison des points de contrôle (Départ vs Retour)',
+    startX,
+    y,
+    'start',
+    `700 19px ${FONT_FAMILY}`,
+    '#0f172a'
+  );
+  y += 32;
+
+  for (const diff of comp.checklistDiffs) {
+    ensureSpace(40);
+    page.ctx.fillStyle = diff.isDegraded ? '#fef2f2' : '#ffffff';
+    page.ctx.fillRect(MARGIN_X, y, contentW, 36);
+    page.ctx.strokeStyle = '#e2e8f0';
+    page.ctx.strokeRect(MARGIN_X, y, contentW, 36);
+
+    const c0 = isAr ? A4_W - MARGIN_X - 16 : MARGIN_X + 16;
+    const c1 = isAr ? A4_W - MARGIN_X - 520 : MARGIN_X + 520;
+    const c2 = isAr ? A4_W - MARGIN_X - 740 : MARGIN_X + 740;
+
+    drawAlignedText(page.ctx, isAr ? diff.labelAr : diff.labelFr, c0, y + 9, 'start', `500 15px ${FONT_FAMILY}`, '#0f172a', 480);
+    drawAlignedText(
+      page.ctx,
+      `${isAr ? 'انطلاق:' : 'Départ:'} ${conditionLabel(diff.departureCondition, lang)}`,
+      c1,
+      y + 9,
+      'start',
+      `500 14px ${FONT_FAMILY}`,
+      '#334155',
+      200
+    );
+    drawAlignedText(
+      page.ctx,
+      `${isAr ? 'إرجاع:' : 'Retour:'} ${conditionLabel(diff.returnCondition, lang)}`,
+      c2,
+      y + 9,
+      'start',
+      `700 14px ${FONT_FAMILY}`,
+      diff.isDegraded ? '#b91c1c' : '#047857',
+      260
+    );
+    y += 36;
+  }
+  y += 28;
+
+  // New damages list
+  ensureSpace(100);
+  drawAlignedText(
+    page.ctx,
+    isAr
+      ? `الأضرار الجديدة المكتشفة عند الإرجاع (${formatDigits(comp.newlyDiscoveredDamages.length, numerals)})`
+      : `Nouveaux dommages constatés au retour (${formatDigits(comp.newlyDiscoveredDamages.length, numerals)})`,
+    startX,
+    y,
+    'start',
+    `700 19px ${FONT_FAMILY}`,
+    '#991b1b'
+  );
+  y += 32;
+
+  if (comp.newlyDiscoveredDamages.length === 0) {
+    drawAlignedText(
+      page.ctx,
+      isAr ? 'لا توجد أضرار جديدة مكتشفة عند الإرجاع.' : 'Aucun nouveau dommage détecté au retour.',
+      startX,
+      y,
+      'start',
+      `500 16px ${FONT_FAMILY}`,
+      '#047857'
+    );
+  } else {
+    for (const dmg of comp.newlyDiscoveredDamages) {
+      ensureSpace(68);
+      page.ctx.fillStyle = '#fef2f2';
+      page.ctx.fillRect(MARGIN_X, y, contentW, 58);
+      page.ctx.strokeStyle = '#fca5a5';
+      page.ctx.strokeRect(MARGIN_X, y, contentW, 58);
+      drawAlignedText(
+        page.ctx,
+        `${dmg.damageCode} · ${getDiagramZoneLabel(dmg.zoneCode, lang)} · ${damageTypeLabel(dmg.damageType, lang)} (${damageSeverityLabel(dmg.severity, lang)})`,
+        startX + (isAr ? -16 : 16),
+        y + 8,
+        'start',
+        `700 15px ${FONT_FAMILY}`,
+        '#7f1d1d',
+        contentW - 32
+      );
+      drawAlignedText(
+        page.ctx,
+        dmg.description,
+        startX + (isAr ? -16 : 16),
+        y + 32,
+        'start',
+        `400 14px ${FONT_FAMILY}`,
+        '#334155',
+        contentW - 32
+      );
+      y += 66;
+    }
+  }
+
+  const blob = buildPdfFromCanvases(pages);
+  downloadBlobFile(`comparatif-dommages-${payload.contract.contractNumber}.pdf`, blob);
+}
+

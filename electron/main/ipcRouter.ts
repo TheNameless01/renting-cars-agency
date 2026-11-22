@@ -1,6 +1,8 @@
 import type Database from 'better-sqlite3';
 import { ZodError } from 'zod';
 import {
+  AdjustInventoryStockSchema,
+  AddVehicleDamageSchema,
   BootstrapAdminSchema,
   CalculatePriceSchema,
   ChangePasswordSchema,
@@ -11,6 +13,8 @@ import {
   CreateCustomerAdjustmentSchema,
   CreateCustomerSchema,
   CreateExpenseSchema,
+  CreateInspectionSchema,
+  CreateMaintenanceRecordSchema,
   CreateReservationSchema,
   CreateRiskRecordSchema,
   CreateSeasonalRateSchema,
@@ -22,6 +26,7 @@ import {
   LoginSchema,
   OpenCashSessionSchema,
   RecordCashAdjustmentSchema,
+  RecordInventoryMovementSchema,
   RecordPaymentSchema,
   ResolveRiskRecordSchema,
   ReverseExpenseSchema,
@@ -29,16 +34,30 @@ import {
   SettleDepositSchema,
   UnlockSessionSchema,
   UpdateCustomerSchema,
+  UpdateDamageStatusSchema,
+  UpdateInspectionDraftSchema,
+  UpdateMaintenanceRecordSchema,
   UpdateReservationStatusSchema,
   UpdateSettingsBatchSchema,
   UpdateUserSchema,
   UpdateVehicleSchema,
   UploadCustomerDocSchema,
+  UploadInspectionPhotoSchema,
   UpsertCustomerCustomRateSchema,
+  UpsertInventoryPartSchema,
+  UpsertMaintenanceTypeSchema,
+  UpsertSupplierSchema,
   UpsertVehicleDocSchema,
+  UpsertVehicleMaintenanceScheduleSchema,
   UpsertWilayaSchema,
 } from '../../shared/schemas/index.ts';
 import type { PermissionCode } from '../../shared/types/domain.ts';
+import {
+  listOperationalAlerts,
+  markAlertRead,
+  resolveAlert,
+  syncOperationalAlerts,
+} from '../database/services/alertService.ts';
 import { listAuditLogs } from '../database/services/auditService.ts';
 import {
   bootstrapFirstAdmin,
@@ -99,6 +118,7 @@ import {
   readExpenseDocument,
   recordExpense,
   reverseExpense,
+  upsertSupplier,
 } from '../database/services/expenseService.ts';
 import {
   buildFinancialReportCsv,
@@ -116,6 +136,42 @@ import {
   updateVehicle,
   upsertVehicleDocument,
 } from '../database/services/fleetService.ts';
+import {
+  addVehicleDamage,
+  createInspection,
+  deleteInspectionPhoto,
+  finalizeInspection,
+  getContractInspections,
+  getInspectionDetail,
+  getInspectionPdfPayload,
+  listInspections,
+  listVehicleDamages,
+  readInspectionPhoto,
+  updateDamageStatus,
+  updateInspectionDraft,
+  uploadInspectionPhoto,
+} from '../database/services/inspectionService.ts';
+import {
+  adjustInventoryStock,
+  archiveInventoryPart,
+  getInventoryOverview,
+  getInventoryPartDetail,
+  listInventoryMovements,
+  listInventoryParts,
+  recordInventoryMovement,
+  upsertInventoryPart,
+} from '../database/services/inventoryService.ts';
+import {
+  createMaintenanceRecord,
+  getMaintenanceRecordDetail,
+  getVehicleMaintenanceOverview,
+  listMaintenanceRecords,
+  listMaintenanceTypes,
+  readMaintenanceInvoice,
+  updateMaintenanceRecord,
+  upsertMaintenanceType,
+  upsertVehicleMaintenanceSchedule,
+} from '../database/services/maintenanceService.ts';
 import {
   getPaymentReceipt,
   listPayments,
@@ -609,6 +665,153 @@ export function createIpcHandlers(
       );
     }),
 
+    // Phase 4 Step 1: Vehicle Inspections & Damage Management
+    [IPC_CHANNELS.INSPECTIONS_LIST]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, [
+        'inspections:view',
+        'inspections:create',
+        'inspections:update',
+        'inspections:finalize',
+        'inspections:manage_damage',
+        'inspections:write',
+        'contracts:read',
+      ]);
+      return listInspections(db, env.data as any);
+    }),
+
+    [IPC_CHANNELS.INSPECTIONS_GET]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, [
+        'inspections:view',
+        'inspections:create',
+        'inspections:update',
+        'inspections:finalize',
+        'inspections:manage_damage',
+        'inspections:write',
+        'contracts:read',
+      ]);
+      return getInspectionDetail(db, Number(env.data?.inspectionId ?? env.data?.id ?? env.data));
+    }),
+
+    [IPC_CHANNELS.INSPECTIONS_GET_BY_CONTRACT]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, [
+        'inspections:view',
+        'inspections:create',
+        'inspections:write',
+        'contracts:read',
+      ]);
+      return getContractInspections(db, Number(env.data?.contractId ?? env.data));
+    }),
+
+    [IPC_CHANNELS.INSPECTIONS_CREATE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['inspections:create', 'inspections:write']);
+      const parsed = CreateInspectionSchema.parse(env.data);
+      if (parsed.finalizeNow) {
+        requireAnyPermission(session.userId, ['inspections:finalize', 'inspections:write']);
+      }
+      return createInspection(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.INSPECTIONS_UPDATE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['inspections:update', 'inspections:write']);
+      const parsed = UpdateInspectionDraftSchema.parse(env.data);
+      return updateInspectionDraft(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.INSPECTIONS_FINALIZE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['inspections:finalize', 'inspections:write']);
+      return finalizeInspection(
+        db,
+        { id: session.userId, username: session.username },
+        Number(env.data?.inspectionId ?? env.data)
+      );
+    }),
+
+    [IPC_CHANNELS.INSPECTIONS_UPLOAD_PHOTO]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['inspections:create', 'inspections:update', 'inspections:write']);
+      if (!vault) throw new Error('Vault non configuré');
+      const parsed = UploadInspectionPhotoSchema.parse(env.data);
+      return uploadInspectionPhoto(
+        db,
+        { id: session.userId, username: session.username },
+        vault.vaultRootDir,
+        vault.vaultKey,
+        parsed
+      );
+    }),
+
+    [IPC_CHANNELS.INSPECTIONS_READ_PHOTO]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['inspections:view', 'inspections:write', 'contracts:read']);
+      if (!vault) throw new Error('Vault non configuré');
+      return readInspectionPhoto(
+        db,
+        vault.vaultRootDir,
+        vault.vaultKey,
+        Number(env.data?.photoId ?? env.data)
+      );
+    }),
+
+    [IPC_CHANNELS.INSPECTIONS_DELETE_PHOTO]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['inspections:update', 'inspections:write']);
+      if (!vault) throw new Error('Vault non configuré');
+      return deleteInspectionPhoto(
+        db,
+        { id: session.userId, username: session.username },
+        vault.vaultRootDir,
+        Number(env.data?.photoId ?? env.data)
+      );
+    }),
+
+    [IPC_CHANNELS.INSPECTIONS_GET_PDF_PAYLOAD]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['inspections:view', 'inspections:write', 'contracts:read', 'documents:generate']);
+      if (!vault) throw new Error('Vault non configuré');
+      return getInspectionPdfPayload(
+        db,
+        vault.vaultRootDir,
+        vault.vaultKey,
+        Number(env.data?.inspectionId ?? env.data)
+      );
+    }),
+
+    [IPC_CHANNELS.DAMAGES_LIST]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, [
+        'inspections:view',
+        'inspections:manage_damage',
+        'inspections:write',
+        'vehicles:read',
+      ]);
+      return listVehicleDamages(db, env.data as any);
+    }),
+
+    [IPC_CHANNELS.DAMAGES_ADD]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, [
+        'inspections:create',
+        'inspections:update',
+        'inspections:manage_damage',
+        'inspections:write',
+      ]);
+      const parsed = AddVehicleDamageSchema.parse(env.data);
+      return addVehicleDamage(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.DAMAGES_UPDATE_STATUS]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'inspections:manage_damage');
+      const parsed = UpdateDamageStatusSchema.parse(env.data);
+      return updateDamageStatus(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
     // Phase 3: Financial Management
     [IPC_CHANNELS.FINANCE_LIST_PAYMENTS]: wrap((env) => {
       const session = requireAuthenticatedSession(db, sessionStore, env.token);
@@ -718,15 +921,40 @@ export function createIpcHandlers(
 
     [IPC_CHANNELS.FINANCE_LIST_SUPPLIERS]: wrap((env) => {
       const session = requireAuthenticatedSession(db, sessionStore, env.token);
-      requireAnyPermission(session.userId, ['finance:read', 'finance:manage_expenses']);
-      return listSuppliers(db);
+      requireAnyPermission(session.userId, [
+        'finance:read',
+        'finance:manage_expenses',
+        'inventory:view',
+        'inventory:manage_parts',
+        'inventory:manage_suppliers',
+        'inventory:read',
+        'inventory:write',
+        'maintenance:view',
+        'maintenance:create',
+      ]);
+      return listSuppliers(db, Boolean(env.data?.includeArchived));
     }),
 
     [IPC_CHANNELS.FINANCE_CREATE_SUPPLIER]: wrap((env) => {
       const session = requireAuthenticatedSession(db, sessionStore, env.token);
-      requirePermission(db, session, 'finance:manage_expenses');
+      requireAnyPermission(session.userId, [
+        'finance:manage_expenses',
+        'inventory:manage_suppliers',
+        'inventory:write',
+      ]);
       const parsed = CreateSupplierSchema.parse(env.data);
       return createSupplier(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.FINANCE_UPSERT_SUPPLIER]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, [
+        'finance:manage_expenses',
+        'inventory:manage_suppliers',
+        'inventory:write',
+      ]);
+      const parsed = UpsertSupplierSchema.parse(env.data);
+      return upsertSupplier(db, { id: session.userId, username: session.username }, parsed);
     }),
 
     [IPC_CHANNELS.FINANCE_LIST_EXPENSES]: wrap((env) => {
@@ -834,6 +1062,258 @@ export function createIpcHandlers(
         fileName: `rapport-financier-${report.dateFrom}_${report.dateTo}.csv`,
         csvContent: buildFinancialReportCsv(report, lang),
       };
+    }),
+
+    // Phase 4 Step 2: Maintenance Management & Operational Alerts
+    [IPC_CHANNELS.MAINTENANCE_LIST]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, [
+        'maintenance:view',
+        'maintenance:create',
+        'maintenance:update',
+        'maintenance:complete',
+        'maintenance:write',
+        'vehicles:read',
+      ]);
+      return listMaintenanceRecords(db, env.data as any);
+    }),
+
+    [IPC_CHANNELS.MAINTENANCE_GET]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, [
+        'maintenance:view',
+        'maintenance:create',
+        'maintenance:update',
+        'maintenance:complete',
+        'maintenance:write',
+        'vehicles:read',
+      ]);
+      return getMaintenanceRecordDetail(db, Number(env.data?.recordId ?? env.data?.id ?? env.data));
+    }),
+
+    [IPC_CHANNELS.MAINTENANCE_CREATE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['maintenance:create', 'maintenance:write']);
+      if (!vault) throw new Error('Vault non configuré');
+      const parsed = CreateMaintenanceRecordSchema.parse(env.data);
+      if (parsed.status === 'COMPLETED') {
+        requireAnyPermission(session.userId, ['maintenance:complete', 'maintenance:write']);
+      }
+      if (parsed.recordInFinance) {
+        requirePermission(db, session, 'finance:manage_expenses');
+      }
+      return createMaintenanceRecord(
+        db,
+        { id: session.userId, username: session.username },
+        vault.vaultRootDir,
+        vault.vaultKey,
+        parsed
+      );
+    }),
+
+    [IPC_CHANNELS.MAINTENANCE_UPDATE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['maintenance:update', 'maintenance:complete', 'maintenance:write']);
+      if (!vault) throw new Error('Vault non configuré');
+      const parsed = UpdateMaintenanceRecordSchema.parse(env.data);
+      if (parsed.status === 'COMPLETED') {
+        requireAnyPermission(session.userId, ['maintenance:complete', 'maintenance:write']);
+      }
+      if (parsed.recordInFinance) {
+        requirePermission(db, session, 'finance:manage_expenses');
+      }
+      return updateMaintenanceRecord(
+        db,
+        { id: session.userId, username: session.username },
+        vault.vaultRootDir,
+        vault.vaultKey,
+        parsed
+      );
+    }),
+
+    [IPC_CHANNELS.MAINTENANCE_READ_INVOICE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, [
+        'maintenance:view',
+        'maintenance:create',
+        'maintenance:update',
+        'maintenance:complete',
+        'maintenance:write',
+        'finance:read',
+      ]);
+      if (!vault) throw new Error('Vault non configuré');
+      return readMaintenanceInvoice(
+        db,
+        vault.vaultRootDir,
+        vault.vaultKey,
+        Number(env.data?.recordId ?? env.data)
+      );
+    }),
+
+    [IPC_CHANNELS.MAINTENANCE_TYPES_LIST]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, [
+        'maintenance:view',
+        'maintenance:create',
+        'maintenance:manage_types',
+        'maintenance:write',
+        'vehicles:read',
+      ]);
+      return listMaintenanceTypes(db, env.data?.includeInactive !== false);
+    }),
+
+    [IPC_CHANNELS.MAINTENANCE_TYPES_UPSERT]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'maintenance:manage_types');
+      const parsed = UpsertMaintenanceTypeSchema.parse(env.data);
+      return upsertMaintenanceType(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.MAINTENANCE_VEHICLE_OVERVIEW]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, [
+        'maintenance:view',
+        'maintenance:create',
+        'maintenance:update',
+        'maintenance:complete',
+        'maintenance:write',
+        'vehicles:read',
+      ]);
+      return getVehicleMaintenanceOverview(db, Number(env.data?.vehicleId ?? env.data));
+    }),
+
+    [IPC_CHANNELS.MAINTENANCE_SCHEDULE_UPSERT]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['maintenance:manage_types', 'maintenance:update', 'maintenance:write']);
+      const parsed = UpsertVehicleMaintenanceScheduleSchema.parse(env.data);
+      return upsertVehicleMaintenanceSchedule(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.NOTIFICATIONS_LIST]: wrap((env) => {
+      requireAuthenticatedSession(db, sessionStore, env.token);
+      return listOperationalAlerts(db, env.data as any);
+    }),
+
+    [IPC_CHANNELS.NOTIFICATIONS_SYNC_ALERTS]: wrap((env) => {
+      requireAuthenticatedSession(db, sessionStore, env.token);
+      return syncOperationalAlerts(db, env.data?.referenceDate);
+    }),
+
+    [IPC_CHANNELS.NOTIFICATIONS_MARK_READ]: wrap((env) => {
+      requireAuthenticatedSession(db, sessionStore, env.token);
+      return markAlertRead(db, Number(env.data?.alertId ?? env.data?.id ?? env.data));
+    }),
+
+    [IPC_CHANNELS.NOTIFICATIONS_RESOLVE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['maintenance:update', 'maintenance:complete', 'maintenance:write', 'vehicles:write']);
+      return resolveAlert(
+        db,
+        { id: session.userId, username: session.username },
+        Number(env.data?.alertId ?? env.data?.id ?? env.data)
+      );
+    }),
+
+    // Phase 4 Step 3: Spare Parts Inventory
+    [IPC_CHANNELS.INVENTORY_OVERVIEW]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, [
+        'inventory:view',
+        'inventory:manage_parts',
+        'inventory:record_movements',
+        'inventory:manage_suppliers',
+        'inventory:adjust_stock',
+        'inventory:read',
+        'inventory:write',
+        'maintenance:view',
+        'maintenance:create',
+      ]);
+      return getInventoryOverview(db);
+    }),
+
+    [IPC_CHANNELS.INVENTORY_LIST]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, [
+        'inventory:view',
+        'inventory:manage_parts',
+        'inventory:record_movements',
+        'inventory:manage_suppliers',
+        'inventory:adjust_stock',
+        'inventory:read',
+        'inventory:write',
+        'maintenance:view',
+        'maintenance:create',
+        'maintenance:update',
+      ]);
+      return listInventoryParts(db, env.data as any);
+    }),
+
+    [IPC_CHANNELS.INVENTORY_GET]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, [
+        'inventory:view',
+        'inventory:manage_parts',
+        'inventory:record_movements',
+        'inventory:adjust_stock',
+        'inventory:read',
+        'inventory:write',
+      ]);
+      return getInventoryPartDetail(db, Number(env.data?.partId ?? env.data?.id ?? env.data));
+    }),
+
+    [IPC_CHANNELS.INVENTORY_UPSERT_PART]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['inventory:manage_parts', 'inventory:write']);
+      const parsed = UpsertInventoryPartSchema.parse(env.data);
+      return upsertInventoryPart(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.INVENTORY_ARCHIVE_PART]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['inventory:manage_parts', 'inventory:write']);
+      return archiveInventoryPart(
+        db,
+        { id: session.userId, username: session.username },
+        Number(env.data?.partId ?? env.data?.id ?? env.data),
+        env.data?.archived !== false
+      );
+    }),
+
+    [IPC_CHANNELS.INVENTORY_MOVEMENTS_LIST]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, [
+        'inventory:view',
+        'inventory:manage_parts',
+        'inventory:record_movements',
+        'inventory:adjust_stock',
+        'inventory:read',
+        'inventory:write',
+      ]);
+      return listInventoryMovements(db, env.data as any);
+    }),
+
+    [IPC_CHANNELS.INVENTORY_RECORD_MOVEMENT]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['inventory:record_movements', 'inventory:write']);
+      if (!vault) throw new Error('Vault non configuré');
+      const parsed = RecordInventoryMovementSchema.parse(env.data);
+      if (parsed.movementType === 'PURCHASE' && parsed.recordInFinance) {
+        requirePermission(db, session, 'finance:manage_expenses');
+      }
+      return recordInventoryMovement(
+        db,
+        { id: session.userId, username: session.username },
+        vault.vaultRootDir,
+        vault.vaultKey,
+        parsed
+      );
+    }),
+
+    [IPC_CHANNELS.INVENTORY_ADJUST_STOCK]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'inventory:adjust_stock');
+      const parsed = AdjustInventoryStockSchema.parse(env.data);
+      return adjustInventoryStock(db, { id: session.userId, username: session.username }, parsed);
     }),
   };
 }

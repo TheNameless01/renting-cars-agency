@@ -1,8 +1,11 @@
 import {
   AlertCircle,
+  AlertTriangle,
   ArrowLeft,
   CalendarPlus,
   CheckCircle2,
+  ClipboardCheck,
+  FileDown,
   Play,
   Plus,
   Receipt,
@@ -13,7 +16,12 @@ import {
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { fromMinorUnits, toMinorUnits } from '../../../shared/constants/algeria.ts';
-import type { PaymentDirection, PaymentMethod } from '../../../shared/types/domain.ts';
+import { getDiagramZoneLabel } from '../../../shared/constants/inspections.ts';
+import type {
+  InspectionStage,
+  PaymentDirection,
+  PaymentMethod,
+} from '../../../shared/types/domain.ts';
 import { ConfirmDialog } from '../../components/ConfirmDialog.tsx';
 import { ModalDialog } from '../../components/ModalDialog.tsx';
 import { useToast } from '../../components/Toast.tsx';
@@ -23,13 +31,18 @@ import {
   erpClient,
   type AvailabilityResultDto,
   type ContractDetailDto,
+  type ContractInspectionsDto,
   type PaymentReceiptDto,
+  type VehicleDamageListItemDto,
 } from '../../lib/apiClient.ts';
 import { formatCurrencyMinor, formatDateTimeAlgiers, formatDigits } from '../../lib/formatters.ts';
+import { exportDamageComparisonPdf, exportInspectionPdf } from '../../lib/pdfExport.ts';
 import { DepositSettleModal } from '../finance/DepositSettleModal.tsx';
 import { PaymentReceiptModal } from '../finance/PaymentReceiptModal.tsx';
+import { DamageResolutionModal } from '../inspections/DamageResolutionModal.tsx';
+import { InspectionWorkflowModal } from '../inspections/InspectionWorkflowModal.tsx';
 
-type DetailTab = 'summary' | 'extensions' | 'payments';
+type DetailTab = 'summary' | 'extensions' | 'payments' | 'inspections';
 
 function toLocalDateTimeInput(input: Date | string): string {
   if (typeof input === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(input) && !input.endsWith('Z')) {
@@ -100,28 +113,58 @@ export function ContractDetailPage() {
   const [reversingPay, setReversingPay] = useState(false);
   const [settleDepositId, setSettleDepositId] = useState<number | null>(null);
 
+  // Phase 4 Step 1: Inspections & Damages
+  const [contractInspections, setContractInspections] = useState<ContractInspectionsDto | null>(null);
+  const [contractDamages, setContractDamages] = useState<VehicleDamageListItemDto[]>([]);
+  const [inspectionModal, setInspectionModal] = useState<{
+    open: boolean;
+    stage: InspectionStage;
+    inspectionId: number | null;
+  }>({ open: false, stage: 'DEPARTURE', inspectionId: null });
+  const [selectedDamage, setSelectedDamage] = useState<VehicleDamageListItemDto | null>(null);
+  const [exportingPdf, setExportingPdf] = useState(false);
+
   const canWrite = hasPermission('contracts:write');
   const canExtend = hasPermission('contracts:extend');
   const canCancel = hasPermission('contracts:cancel');
   const canRecordPayment = hasPermission('finance:record_payment');
   const canReversePayment = hasPermission('finance:approve_adjustment');
   const canManageDeposit = hasPermission('finance:manage_deposit');
+  const canCreateInspection =
+    hasPermission('inspections:create') || hasPermission('inspections:write');
+  const canViewInspections =
+    hasPermission('inspections:view') || canCreateInspection || hasPermission('contracts:read');
 
   const loadDetail = useCallback(async () => {
     if (!id) return;
     setLoading(true);
     try {
-      const data = await erpClient.getContractDetail(Number(id));
+      const contractIdNum = Number(id);
+      const data = await erpClient.getContractDetail(contractIdNum);
       setDetail(data);
       const nextDayMs = Date.parse(data.contract.expectedReturnDate) + 24 * 60 * 60 * 1000;
       setExtNewReturnDate(toLocalDateTimeInput(new Date(nextDayMs)));
       setCompOdometerKm(String(data.contract.departureOdometerKm));
+
+      if (canViewInspections) {
+        try {
+          const [inspData, dmgData] = await Promise.all([
+            erpClient.getContractInspections(contractIdNum),
+            erpClient.listVehicleDamages({ vehicleId: data.contract.vehicleId }),
+          ]);
+          setContractInspections(inspData);
+          setContractDamages(dmgData);
+        } catch {
+          setContractInspections(null);
+          setContractDamages([]);
+        }
+      }
     } catch (err) {
       showError(err instanceof Error ? err.message : t.common.error);
     } finally {
       setLoading(false);
     }
-  }, [id, showError, t.common.error]);
+  }, [canViewInspections, id, showError, t.common.error]);
 
   useEffect(() => {
     void loadDetail();
@@ -466,7 +509,7 @@ export function ContractDetailPage() {
 
       {/* Tabs */}
       <div className="border-b border-slate-200 dark:border-slate-800 flex items-center gap-2 overflow-x-auto">
-        {(['summary', 'extensions', 'payments'] as const).map((tab) => (
+        {(['summary', 'extensions', 'payments', 'inspections'] as const).map((tab) => (
           <button
             key={tab}
             type="button"
@@ -479,6 +522,9 @@ export function ContractDetailPage() {
           >
             {t.contracts.detailTabs[tab]}
             {tab === 'extensions' && extensions.length > 0 ? ` (${extensions.length})` : ''}
+            {tab === 'inspections' && contractInspections
+              ? ` (${Number(Boolean(contractInspections.departure)) + Number(Boolean(contractInspections.returnInspection))})`
+              : ''}
           </button>
         ))}
       </div>
@@ -760,6 +806,384 @@ export function ContractDetailPage() {
                               </button>
                             )}
                           </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'inspections' && (
+        <div className="space-y-6">
+          <div className="p-3.5 rounded-xl border border-blue-200 dark:border-blue-900 bg-blue-50/70 dark:bg-blue-950/30 text-xs text-blue-900 dark:text-blue-200 flex items-start gap-2.5">
+            <ClipboardCheck className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>{t.inspections.noAutoChargeNotice}</span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Departure Inspection Card */}
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  {t.inspections.newDeparture}
+                </h3>
+                {contractInspections?.departure ? (
+                  <span
+                    className={`px-2 py-0.5 rounded text-[11px] font-medium ${
+                      contractInspections.departure.inspection.status === 'FINALIZED'
+                        ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
+                        : 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300'
+                    }`}
+                  >
+                    {contractInspections.departure.inspection.status === 'FINALIZED'
+                      ? t.inspections.statusFinalized
+                      : t.inspections.statusDraft}
+                  </span>
+                ) : null}
+              </div>
+
+              {contractInspections?.departure ? (
+                <div className="space-y-2 text-xs">
+                  <div className="font-mono-tabular text-slate-700 dark:text-slate-300">
+                    {contractInspections.departure.inspection.inspectionNumber} ·{' '}
+                    {formatDateTimeAlgiers(
+                      contractInspections.departure.inspection.inspectedAt,
+                      lang,
+                      numerals
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-4 font-mono-tabular text-slate-600 dark:text-slate-400">
+                    <span>
+                      {t.inspections.odometerKm}:{' '}
+                      <strong>
+                        {formatDigits(
+                          contractInspections.departure.inspection.odometerKm.toLocaleString(),
+                          numerals
+                        )}{' '}
+                        km
+                      </strong>
+                    </span>
+                    <span>
+                      {t.inspections.fuelLevelPercent}:{' '}
+                      <strong>
+                        {formatDigits(
+                          contractInspections.departure.inspection.fuelLevelPercent,
+                          numerals
+                        )}
+                        %
+                      </strong>
+                    </span>
+                  </div>
+                  <div className="text-slate-500">
+                    {formatDigits(contractInspections.departure.photos.length, numerals)} photos ·{' '}
+                    {formatDigits(contractInspections.departure.damages.length, numerals)}{' '}
+                    {t.inspections.tabDamages}
+                  </div>
+                  <div className="pt-2 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setInspectionModal({
+                          open: true,
+                          stage: 'DEPARTURE',
+                          inspectionId: contractInspections.departure!.inspection.id,
+                        })
+                      }
+                      className="px-3 py-1.5 rounded-lg bg-blue-900 hover:bg-blue-800 dark:bg-blue-700 dark:hover:bg-blue-600 text-white text-xs font-medium"
+                    >
+                      {contractInspections.departure.inspection.status === 'FINALIZED'
+                        ? t.common.view
+                        : t.dialogs.editAction}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={exportingPdf}
+                      onClick={async () => {
+                        setExportingPdf(true);
+                        try {
+                          const payload = await erpClient.getInspectionPdfPayload(
+                            contractInspections.departure!.inspection.id
+                          );
+                          await exportInspectionPdf(payload, lang, numerals);
+                        } catch (err) {
+                          showError(err instanceof Error ? err.message : t.common.error);
+                        } finally {
+                          setExportingPdf(false);
+                        }
+                      }}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800"
+                    >
+                      <FileDown className="w-3.5 h-3.5" />
+                      <span>{t.inspections.exportPdfBtn}</span>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3 text-xs text-slate-500">
+                  <p>{t.inspections.emptyInspections}</p>
+                  {canCreateInspection && c.status !== 'CANCELLED' && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setInspectionModal({ open: true, stage: 'DEPARTURE', inspectionId: null })
+                      }
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-900 hover:bg-blue-800 dark:bg-blue-700 dark:hover:bg-blue-600 text-white text-xs font-medium"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>{t.inspections.newDeparture}</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Return Inspection Card */}
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  {t.inspections.newReturn}
+                </h3>
+                {contractInspections?.returnInspection ? (
+                  <span
+                    className={`px-2 py-0.5 rounded text-[11px] font-medium ${
+                      contractInspections.returnInspection.inspection.status === 'FINALIZED'
+                        ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
+                        : 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300'
+                    }`}
+                  >
+                    {contractInspections.returnInspection.inspection.status === 'FINALIZED'
+                      ? t.inspections.statusFinalized
+                      : t.inspections.statusDraft}
+                  </span>
+                ) : null}
+              </div>
+
+              {contractInspections?.returnInspection ? (
+                <div className="space-y-2 text-xs">
+                  <div className="font-mono-tabular text-slate-700 dark:text-slate-300">
+                    {contractInspections.returnInspection.inspection.inspectionNumber} ·{' '}
+                    {formatDateTimeAlgiers(
+                      contractInspections.returnInspection.inspection.inspectedAt,
+                      lang,
+                      numerals
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-4 font-mono-tabular text-slate-600 dark:text-slate-400">
+                    <span>
+                      {t.inspections.odometerKm}:{' '}
+                      <strong>
+                        {formatDigits(
+                          contractInspections.returnInspection.inspection.odometerKm.toLocaleString(),
+                          numerals
+                        )}{' '}
+                        km
+                      </strong>
+                    </span>
+                    <span>
+                      {t.inspections.fuelLevelPercent}:{' '}
+                      <strong>
+                        {formatDigits(
+                          contractInspections.returnInspection.inspection.fuelLevelPercent,
+                          numerals
+                        )}
+                        %
+                      </strong>
+                    </span>
+                  </div>
+                  <div className="text-slate-500">
+                    {formatDigits(contractInspections.returnInspection.photos.length, numerals)} photos ·{' '}
+                    {formatDigits(contractInspections.returnInspection.damages.length, numerals)}{' '}
+                    {t.inspections.tabDamages}
+                  </div>
+                  <div className="pt-2 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setInspectionModal({
+                          open: true,
+                          stage: 'RETURN',
+                          inspectionId: contractInspections.returnInspection!.inspection.id,
+                        })
+                      }
+                      className="px-3 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-xs font-medium"
+                    >
+                      {contractInspections.returnInspection.inspection.status === 'FINALIZED'
+                        ? t.common.view
+                        : t.dialogs.editAction}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={exportingPdf}
+                      onClick={async () => {
+                        setExportingPdf(true);
+                        try {
+                          const payload = await erpClient.getInspectionPdfPayload(
+                            contractInspections.returnInspection!.inspection.id
+                          );
+                          await exportInspectionPdf(payload, lang, numerals);
+                        } catch (err) {
+                          showError(err instanceof Error ? err.message : t.common.error);
+                        } finally {
+                          setExportingPdf(false);
+                        }
+                      }}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800"
+                    >
+                      <FileDown className="w-3.5 h-3.5" />
+                      <span>{t.inspections.exportPdfBtn}</span>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3 text-xs text-slate-500">
+                  <p>{t.inspections.emptyInspections}</p>
+                  {canCreateInspection && c.status !== 'CANCELLED' && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setInspectionModal({ open: true, stage: 'RETURN', inspectionId: null })
+                      }
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-xs font-medium"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>{t.inspections.newReturn}</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Comparison Summary */}
+          {contractInspections?.comparison && (
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  {t.inspections.comparisonTitle}
+                </h3>
+                {contractInspections.returnInspection && (
+                  <button
+                    type="button"
+                    disabled={exportingPdf}
+                    onClick={async () => {
+                      setExportingPdf(true);
+                      try {
+                        const payload = await erpClient.getInspectionPdfPayload(
+                          contractInspections.returnInspection!.inspection.id
+                        );
+                        await exportDamageComparisonPdf(payload, lang, numerals);
+                      } catch (err) {
+                        showError(err instanceof Error ? err.message : t.common.error);
+                      } finally {
+                        setExportingPdf(false);
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800"
+                  >
+                    <FileDown className="w-3.5 h-3.5" />
+                    <span>{t.inspections.exportComparisonPdfBtn}</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                  <div className="text-slate-500">{t.inspections.odometerDelta}</div>
+                  <div className="font-mono-tabular font-semibold text-sm mt-1">
+                    {contractInspections.comparison.odometerDeltaKm != null
+                      ? `${formatDigits(
+                          contractInspections.comparison.odometerDeltaKm.toLocaleString(),
+                          numerals
+                        )} km`
+                      : '—'}
+                  </div>
+                </div>
+                <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                  <div className="text-slate-500">{t.inspections.fuelDelta}</div>
+                  <div className="font-mono-tabular font-semibold text-sm mt-1">
+                    {contractInspections.comparison.fuelDeltaPercent != null
+                      ? `${formatDigits(contractInspections.comparison.fuelDeltaPercent, numerals)}%`
+                      : '—'}
+                  </div>
+                </div>
+                <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                  <div className="text-slate-500">{t.inspections.lateReturn}</div>
+                  <div className="font-mono-tabular font-semibold text-sm mt-1">
+                    {contractInspections.comparison.lateReturnMinutes > 0
+                      ? `${formatDigits(contractInspections.comparison.lateReturnMinutes, numerals)} min`
+                      : t.inspections.onTime}
+                  </div>
+                </div>
+                <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                  <div className="text-slate-500">{t.inspections.degradedItems}</div>
+                  <div className="font-mono-tabular font-semibold text-sm mt-1 text-rose-700 dark:text-rose-400">
+                    {formatDigits(contractInspections.comparison.degradedItemsCount, numerals)} ·{' '}
+                    {formatDigits(contractInspections.comparison.missingAccessoriesCount, numerals)}{' '}
+                    {t.inspections.missingAccessories}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Open Vehicle Damages */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
+            <div className="px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                {t.inspections.tabDamages} ({formatDigits(contractDamages.length, numerals)})
+              </span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="border-b border-slate-200 dark:border-slate-800 text-slate-500">
+                  <tr>
+                    <th className="px-4 py-2.5 text-start">Code</th>
+                    <th className="px-4 py-2.5 text-start">{t.inspections.selectedZone}</th>
+                    <th className="px-4 py-2.5 text-start">{t.inspections.damageDescription}</th>
+                    <th className="px-4 py-2.5 text-start">{t.vehicles.statusLabel}</th>
+                    <th className="px-4 py-2.5 text-end">{t.users.actions}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                  {contractDamages.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-6 text-center text-slate-500">
+                        {t.inspections.emptyDamages}
+                      </td>
+                    </tr>
+                  ) : (
+                    contractDamages.map((d) => (
+                      <tr key={d.id}>
+                        <td className="px-4 py-2.5 font-mono-tabular font-semibold">{d.damageCode}</td>
+                        <td className="px-4 py-2.5">
+                          <div>{getDiagramZoneLabel(d.zoneCode, lang)}</div>
+                          <div className="text-[11px] text-slate-500">
+                            {t.inspections.damageTypes[d.damageType]} ·{' '}
+                            {t.inspections.damageSeverities[d.severity]}
+                          </div>
+                        </td>
+                        <td className="px-4 py-2.5 max-w-sm">
+                          <div>{d.description}</div>
+                          {d.isNewlyDiscovered && (
+                            <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 text-[10px]">
+                              {t.inspections.isNewlyDiscovered}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5">{t.inspections.damageStatuses[d.status]}</td>
+                        <td className="px-4 py-2.5 text-end">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedDamage(d)}
+                            className="px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                          >
+                            {t.common.view}
+                          </button>
                         </td>
                       </tr>
                     ))
@@ -1237,6 +1661,22 @@ export function ContractDetailPage() {
           />
         </div>
       </ConfirmDialog>
+
+      <InspectionWorkflowModal
+        open={inspectionModal.open}
+        contractId={c.id}
+        stage={inspectionModal.stage}
+        inspectionId={inspectionModal.inspectionId}
+        onClose={() => setInspectionModal((s) => ({ ...s, open: false }))}
+        onSaved={() => void loadDetail()}
+      />
+
+      <DamageResolutionModal
+        open={Boolean(selectedDamage)}
+        damage={selectedDamage}
+        onClose={() => setSelectedDamage(null)}
+        onUpdated={() => void loadDetail()}
+      />
     </div>
   );
 }

@@ -16,6 +16,12 @@ import {
   logoutUser,
   unlockSession,
 } from './electron/database/services/authService.ts';
+import {
+  listOperationalAlerts,
+  markAlertRead,
+  resolveAlert,
+  syncOperationalAlerts,
+} from './electron/database/services/alertService.ts';
 import { checkVehicleAvailability, getPlanningCalendar } from './electron/database/services/availabilityService.ts';
 import {
   closeCashSession,
@@ -66,6 +72,7 @@ import {
   readExpenseDocument,
   recordExpense,
   reverseExpense,
+  upsertSupplier,
 } from './electron/database/services/expenseService.ts';
 import {
   buildFinancialReportCsv,
@@ -83,6 +90,42 @@ import {
   updateVehicle,
   upsertVehicleDocument,
 } from './electron/database/services/fleetService.ts';
+import {
+  addVehicleDamage,
+  createInspection,
+  deleteInspectionPhoto,
+  finalizeInspection,
+  getContractInspections,
+  getInspectionDetail,
+  getInspectionPdfPayload,
+  listInspections,
+  listVehicleDamages,
+  readInspectionPhoto,
+  updateDamageStatus,
+  updateInspectionDraft,
+  uploadInspectionPhoto,
+} from './electron/database/services/inspectionService.ts';
+import {
+  adjustInventoryStock,
+  archiveInventoryPart,
+  getInventoryOverview,
+  getInventoryPartDetail,
+  listInventoryMovements,
+  listInventoryParts,
+  recordInventoryMovement,
+  upsertInventoryPart,
+} from './electron/database/services/inventoryService.ts';
+import {
+  createMaintenanceRecord,
+  getMaintenanceRecordDetail,
+  getVehicleMaintenanceOverview,
+  listMaintenanceRecords,
+  listMaintenanceTypes,
+  readMaintenanceInvoice,
+  updateMaintenanceRecord,
+  upsertMaintenanceType,
+  upsertVehicleMaintenanceSchedule,
+} from './electron/database/services/maintenanceService.ts';
 import {
   getPaymentReceipt,
   listPayments,
@@ -109,6 +152,8 @@ import { AuthError, requireAuthenticatedSession, requirePermission, resolveEffec
 import { SessionStore } from './electron/security/sessionStore.ts';
 import { PREVIEW_ENDPOINTS } from './shared/api/previewContracts.ts';
 import {
+  AdjustInventoryStockSchema,
+  AddVehicleDamageSchema,
   BootstrapAdminSchema,
   CalculatePriceSchema,
   ChangePasswordSchema,
@@ -119,6 +164,8 @@ import {
   CreateCustomerAdjustmentSchema,
   CreateCustomerSchema,
   CreateExpenseSchema,
+  CreateInspectionSchema,
+  CreateMaintenanceRecordSchema,
   CreateReservationSchema,
   CreateRiskRecordSchema,
   CreateSeasonalRateSchema,
@@ -130,6 +177,7 @@ import {
   LoginSchema,
   OpenCashSessionSchema,
   RecordCashAdjustmentSchema,
+  RecordInventoryMovementSchema,
   RecordPaymentSchema,
   ResolveRiskRecordSchema,
   ReverseExpenseSchema,
@@ -137,13 +185,21 @@ import {
   SettleDepositSchema,
   UnlockSessionSchema,
   UpdateCustomerSchema,
+  UpdateDamageStatusSchema,
+  UpdateInspectionDraftSchema,
+  UpdateMaintenanceRecordSchema,
   UpdateReservationStatusSchema,
   UpdateSettingsBatchSchema,
   UpdateUserSchema,
   UpdateVehicleSchema,
   UploadCustomerDocSchema,
+  UploadInspectionPhotoSchema,
   UpsertCustomerCustomRateSchema,
+  UpsertInventoryPartSchema,
+  UpsertMaintenanceTypeSchema,
+  UpsertSupplierSchema,
   UpsertVehicleDocSchema,
+  UpsertVehicleMaintenanceScheduleSchema,
   UpsertWilayaSchema,
 } from './shared/schemas/index.ts';
 import type { PermissionCode } from './shared/types/domain.ts';
@@ -925,6 +981,244 @@ export function createPreviewExpressApp(customDbPath?: string) {
   });
 
   // ============================================================================
+  // Phase 4 Step 1: Vehicle Inspections & Damage Management
+  // ============================================================================
+  app.get(PREVIEW_ENDPOINTS.INSPECTIONS, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, [
+        'inspections:view',
+        'inspections:create',
+        'inspections:update',
+        'inspections:finalize',
+        'inspections:manage_damage',
+        'inspections:write',
+        'contracts:read',
+      ]);
+      res.json({
+        ok: true,
+        data: listInspections(db, {
+          vehicleId: req.query.vehicleId ? Number(req.query.vehicleId) : undefined,
+          contractId: req.query.contractId ? Number(req.query.contractId) : undefined,
+          stage: typeof req.query.stage === 'string' ? (req.query.stage as any) : undefined,
+          status: typeof req.query.status === 'string' ? (req.query.status as any) : undefined,
+          onlyWithNewDamages: req.query.onlyWithNewDamages === 'true',
+          search: typeof req.query.search === 'string' ? req.query.search : undefined,
+        }),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.INSPECTIONS}/contract/:contractId`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, [
+        'inspections:view',
+        'inspections:create',
+        'inspections:write',
+        'contracts:read',
+      ]);
+      res.json({ ok: true, data: getContractInspections(db, Number(req.params.contractId)) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.INSPECTIONS}/damages`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, [
+        'inspections:view',
+        'inspections:manage_damage',
+        'inspections:write',
+        'vehicles:read',
+      ]);
+      res.json({
+        ok: true,
+        data: listVehicleDamages(db, {
+          vehicleId: req.query.vehicleId ? Number(req.query.vehicleId) : undefined,
+          contractId: req.query.contractId ? Number(req.query.contractId) : undefined,
+          inspectionId: req.query.inspectionId ? Number(req.query.inspectionId) : undefined,
+          status: typeof req.query.status === 'string' ? (req.query.status as any) : undefined,
+          onlyNewlyDiscovered: req.query.onlyNewlyDiscovered === 'true',
+        }),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.INSPECTIONS}/damages`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, [
+        'inspections:create',
+        'inspections:update',
+        'inspections:manage_damage',
+        'inspections:write',
+      ]);
+      const parsed = AddVehicleDamageSchema.parse(req.body);
+      res.status(201).json({
+        ok: true,
+        data: addVehicleDamage(db, { id: session.userId, username: session.username }, parsed),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.patch(`${PREVIEW_ENDPOINTS.INSPECTIONS}/damages/:damageId/status`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'inspections:manage_damage');
+      const parsed = UpdateDamageStatusSchema.parse({
+        ...req.body,
+        damageId: Number(req.params.damageId),
+      });
+      res.json({
+        ok: true,
+        data: updateDamageStatus(db, { id: session.userId, username: session.username }, parsed),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.INSPECTIONS}/photos/:photoId`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['inspections:view', 'inspections:write', 'contracts:read']);
+      res.json({
+        ok: true,
+        data: readInspectionPhoto(db, previewVaultDir, previewVaultKey, Number(req.params.photoId)),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.delete(`${PREVIEW_ENDPOINTS.INSPECTIONS}/photos/:photoId`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['inspections:update', 'inspections:write']);
+      res.json({
+        ok: true,
+        data: deleteInspectionPhoto(
+          db,
+          { id: session.userId, username: session.username },
+          previewVaultDir,
+          Number(req.params.photoId)
+        ),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.INSPECTIONS}/:id/pdf-payload`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['inspections:view', 'inspections:write', 'contracts:read', 'documents:generate']);
+      res.json({
+        ok: true,
+        data: getInspectionPdfPayload(db, previewVaultDir, previewVaultKey, Number(req.params.id)),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.INSPECTIONS}/:id`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, [
+        'inspections:view',
+        'inspections:create',
+        'inspections:update',
+        'inspections:finalize',
+        'inspections:manage_damage',
+        'inspections:write',
+        'contracts:read',
+      ]);
+      res.json({ ok: true, data: getInspectionDetail(db, Number(req.params.id)) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(PREVIEW_ENDPOINTS.INSPECTIONS, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['inspections:create', 'inspections:write']);
+      const parsed = CreateInspectionSchema.parse(req.body);
+      if (parsed.finalizeNow) {
+        requireAnyPermission(session.userId, ['inspections:finalize', 'inspections:write']);
+      }
+      res.status(201).json({
+        ok: true,
+        data: createInspection(db, { id: session.userId, username: session.username }, parsed),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.patch(`${PREVIEW_ENDPOINTS.INSPECTIONS}/:id`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['inspections:update', 'inspections:write']);
+      const parsed = UpdateInspectionDraftSchema.parse({
+        ...req.body,
+        inspectionId: Number(req.params.id),
+      });
+      res.json({
+        ok: true,
+        data: updateInspectionDraft(db, { id: session.userId, username: session.username }, parsed),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.INSPECTIONS}/:id/finalize`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['inspections:finalize', 'inspections:write']);
+      res.json({
+        ok: true,
+        data: finalizeInspection(db, { id: session.userId, username: session.username }, Number(req.params.id)),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.INSPECTIONS}/:id/photos`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['inspections:create', 'inspections:update', 'inspections:write']);
+      const parsed = UploadInspectionPhotoSchema.parse({
+        ...req.body,
+        inspectionId: Number(req.params.id),
+      });
+      res.status(201).json({
+        ok: true,
+        data: uploadInspectionPhoto(
+          db,
+          { id: session.userId, username: session.username },
+          previewVaultDir,
+          previewVaultKey,
+          parsed
+        ),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  // ============================================================================
   // Phase 3: Financial Management
   // ============================================================================
   app.get(`${PREVIEW_ENDPOINTS.FINANCE}/payments`, (req, res) => {
@@ -1133,8 +1427,18 @@ export function createPreviewExpressApp(customDbPath?: string) {
   app.get(`${PREVIEW_ENDPOINTS.FINANCE}/suppliers`, (req, res) => {
     try {
       const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
-      requireAnyPermission(session.userId, ['finance:read', 'finance:manage_expenses']);
-      res.json({ ok: true, data: listSuppliers(db) });
+      requireAnyPermission(session.userId, [
+        'finance:read',
+        'finance:manage_expenses',
+        'inventory:view',
+        'inventory:manage_parts',
+        'inventory:manage_suppliers',
+        'inventory:read',
+        'inventory:write',
+        'maintenance:view',
+        'maintenance:create',
+      ]);
+      res.json({ ok: true, data: listSuppliers(db, req.query.includeArchived === 'true') });
     } catch (err) {
       handleError(res, err);
     }
@@ -1143,11 +1447,32 @@ export function createPreviewExpressApp(customDbPath?: string) {
   app.post(`${PREVIEW_ENDPOINTS.FINANCE}/suppliers`, (req, res) => {
     try {
       const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
-      requirePermission(db, session, 'finance:manage_expenses');
-      const parsed = CreateSupplierSchema.parse(req.body);
-      res.status(201).json({
+      requireAnyPermission(session.userId, [
+        'finance:manage_expenses',
+        'inventory:manage_suppliers',
+        'inventory:write',
+      ]);
+      const parsed = UpsertSupplierSchema.parse(req.body);
+      const isCreate = !parsed.id;
+      const saved = upsertSupplier(db, { id: session.userId, username: session.username }, parsed);
+      res.status(isCreate ? 201 : 200).json({ ok: true, data: saved });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.put(`${PREVIEW_ENDPOINTS.FINANCE}/suppliers/:id`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, [
+        'finance:manage_expenses',
+        'inventory:manage_suppliers',
+        'inventory:write',
+      ]);
+      const parsed = UpsertSupplierSchema.parse({ ...req.body, id: Number(req.params.id) });
+      res.json({
         ok: true,
-        data: createSupplier(db, { id: session.userId, username: session.username }, parsed),
+        data: upsertSupplier(db, { id: session.userId, username: session.username }, parsed),
       });
     } catch (err) {
       handleError(res, err);
@@ -1355,6 +1680,411 @@ export function createPreviewExpressApp(customDbPath?: string) {
           fileName: `rapport-financier-${report.dateFrom}_${report.dateTo}.csv`,
           csvContent: buildFinancialReportCsv(report, lang),
         },
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  // ============================================================================
+  // Phase 4 Step 2: Maintenance Management & Operational Alerts
+  // ============================================================================
+  app.get(`${PREVIEW_ENDPOINTS.MAINTENANCE}/types`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, [
+        'maintenance:view',
+        'maintenance:create',
+        'maintenance:manage_types',
+        'maintenance:write',
+        'vehicles:read',
+      ]);
+      const includeInactive = req.query.includeInactive !== 'false';
+      res.json({ ok: true, data: listMaintenanceTypes(db, includeInactive) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.MAINTENANCE}/types`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'maintenance:manage_types');
+      const parsed = UpsertMaintenanceTypeSchema.parse(req.body);
+      const isCreate = !parsed.id;
+      const saved = upsertMaintenanceType(db, { id: session.userId, username: session.username }, parsed);
+      res.status(isCreate ? 201 : 200).json({ ok: true, data: saved });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.MAINTENANCE}/vehicles/:vehicleId/overview`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, [
+        'maintenance:view',
+        'maintenance:create',
+        'maintenance:update',
+        'maintenance:complete',
+        'maintenance:write',
+        'vehicles:read',
+      ]);
+      res.json({ ok: true, data: getVehicleMaintenanceOverview(db, Number(req.params.vehicleId)) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.put(`${PREVIEW_ENDPOINTS.MAINTENANCE}/schedules`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['maintenance:manage_types', 'maintenance:update', 'maintenance:write']);
+      const parsed = UpsertVehicleMaintenanceScheduleSchema.parse(req.body);
+      res.json({
+        ok: true,
+        data: upsertVehicleMaintenanceSchedule(db, { id: session.userId, username: session.username }, parsed),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(PREVIEW_ENDPOINTS.MAINTENANCE, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, [
+        'maintenance:view',
+        'maintenance:create',
+        'maintenance:update',
+        'maintenance:complete',
+        'maintenance:write',
+        'vehicles:read',
+      ]);
+      res.json({
+        ok: true,
+        data: listMaintenanceRecords(db, {
+          vehicleId: req.query.vehicleId ? Number(req.query.vehicleId) : undefined,
+          maintenanceTypeId: req.query.maintenanceTypeId ? Number(req.query.maintenanceTypeId) : undefined,
+          status: typeof req.query.status === 'string' ? (req.query.status as any) : undefined,
+          isEmergency: req.query.isEmergency === 'true',
+          dateFrom: typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined,
+          dateTo: typeof req.query.dateTo === 'string' ? req.query.dateTo : undefined,
+          search: typeof req.query.search === 'string' ? req.query.search : undefined,
+        }),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.MAINTENANCE}/:id/invoice`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, [
+        'maintenance:view',
+        'maintenance:create',
+        'maintenance:update',
+        'maintenance:complete',
+        'maintenance:write',
+        'finance:read',
+      ]);
+      res.json({
+        ok: true,
+        data: readMaintenanceInvoice(db, previewVaultDir, previewVaultKey, Number(req.params.id)),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.MAINTENANCE}/:id`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, [
+        'maintenance:view',
+        'maintenance:create',
+        'maintenance:update',
+        'maintenance:complete',
+        'maintenance:write',
+        'vehicles:read',
+      ]);
+      res.json({ ok: true, data: getMaintenanceRecordDetail(db, Number(req.params.id)) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(PREVIEW_ENDPOINTS.MAINTENANCE, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['maintenance:create', 'maintenance:write']);
+      const parsed = CreateMaintenanceRecordSchema.parse(req.body);
+      if (parsed.status === 'COMPLETED') {
+        requireAnyPermission(session.userId, ['maintenance:complete', 'maintenance:write']);
+      }
+      if (parsed.recordInFinance) {
+        requirePermission(db, session, 'finance:manage_expenses');
+      }
+      const created = createMaintenanceRecord(
+        db,
+        { id: session.userId, username: session.username },
+        previewVaultDir,
+        previewVaultKey,
+        parsed
+      );
+      res.status(201).json({ ok: true, data: created });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.patch(`${PREVIEW_ENDPOINTS.MAINTENANCE}/:id`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['maintenance:update', 'maintenance:complete', 'maintenance:write']);
+      const parsed = UpdateMaintenanceRecordSchema.parse({
+        ...req.body,
+        recordId: Number(req.params.id),
+      });
+      if (parsed.status === 'COMPLETED') {
+        requireAnyPermission(session.userId, ['maintenance:complete', 'maintenance:write']);
+      }
+      if (parsed.recordInFinance) {
+        requirePermission(db, session, 'finance:manage_expenses');
+      }
+      const updated = updateMaintenanceRecord(
+        db,
+        { id: session.userId, username: session.username },
+        previewVaultDir,
+        previewVaultKey,
+        parsed
+      );
+      res.json({ ok: true, data: updated });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(PREVIEW_ENDPOINTS.NOTIFICATIONS, (req, res) => {
+    try {
+      requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      res.json({
+        ok: true,
+        data: listOperationalAlerts(db, {
+          includeResolved: req.query.includeResolved === 'true',
+          category: typeof req.query.category === 'string' ? req.query.category : undefined,
+          severity: typeof req.query.severity === 'string' ? (req.query.severity as any) : undefined,
+          vehicleId: req.query.vehicleId ? Number(req.query.vehicleId) : undefined,
+        }),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.NOTIFICATIONS}/sync`, (req, res) => {
+    try {
+      requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      const referenceDate = typeof req.body?.referenceDate === 'string' ? req.body.referenceDate : undefined;
+      res.json({ ok: true, data: syncOperationalAlerts(db, referenceDate) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.NOTIFICATIONS}/:id/read`, (req, res) => {
+    try {
+      requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      res.json({ ok: true, data: markAlertRead(db, Number(req.params.id)) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.NOTIFICATIONS}/:id/resolve`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, [
+        'maintenance:update',
+        'maintenance:complete',
+        'maintenance:write',
+        'vehicles:write',
+      ]);
+      res.json({
+        ok: true,
+        data: resolveAlert(db, { id: session.userId, username: session.username }, Number(req.params.id)),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  // ============================================================================
+  // Phase 4 Step 3: Spare Parts Inventory (static paths before :id)
+  // ============================================================================
+  app.get(`${PREVIEW_ENDPOINTS.INVENTORY}/overview`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, [
+        'inventory:view',
+        'inventory:manage_parts',
+        'inventory:record_movements',
+        'inventory:manage_suppliers',
+        'inventory:adjust_stock',
+        'inventory:read',
+        'inventory:write',
+        'maintenance:view',
+        'maintenance:create',
+      ]);
+      res.json({ ok: true, data: getInventoryOverview(db) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.INVENTORY}/movements`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, [
+        'inventory:view',
+        'inventory:manage_parts',
+        'inventory:record_movements',
+        'inventory:adjust_stock',
+        'inventory:read',
+        'inventory:write',
+      ]);
+      res.json({
+        ok: true,
+        data: listInventoryMovements(db, {
+          partId: req.query.partId ? Number(req.query.partId) : undefined,
+          movementType: typeof req.query.movementType === 'string' ? (req.query.movementType as any) : undefined,
+          vehicleId: req.query.vehicleId ? Number(req.query.vehicleId) : undefined,
+          supplierId: req.query.supplierId ? Number(req.query.supplierId) : undefined,
+          dateFrom: typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined,
+          dateTo: typeof req.query.dateTo === 'string' ? req.query.dateTo : undefined,
+          search: typeof req.query.search === 'string' ? req.query.search : undefined,
+          limit: req.query.limit ? Number(req.query.limit) : undefined,
+        }),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.INVENTORY}/movements`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['inventory:record_movements', 'inventory:write']);
+      const parsed = RecordInventoryMovementSchema.parse(req.body);
+      if (parsed.movementType === 'PURCHASE' && parsed.recordInFinance) {
+        requirePermission(db, session, 'finance:manage_expenses');
+      }
+      res.status(201).json({
+        ok: true,
+        data: recordInventoryMovement(
+          db,
+          { id: session.userId, username: session.username },
+          previewVaultDir,
+          previewVaultKey,
+          parsed
+        ),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.INVENTORY}/adjust`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'inventory:adjust_stock');
+      const parsed = AdjustInventoryStockSchema.parse(req.body);
+      res.status(201).json({
+        ok: true,
+        data: adjustInventoryStock(db, { id: session.userId, username: session.username }, parsed),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.INVENTORY}/parts`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, [
+        'inventory:view',
+        'inventory:manage_parts',
+        'inventory:record_movements',
+        'inventory:manage_suppliers',
+        'inventory:adjust_stock',
+        'inventory:read',
+        'inventory:write',
+        'maintenance:view',
+        'maintenance:create',
+        'maintenance:update',
+      ]);
+      res.json({
+        ok: true,
+        data: listInventoryParts(db, {
+          category: typeof req.query.category === 'string' ? req.query.category : undefined,
+          supplierId: req.query.supplierId ? Number(req.query.supplierId) : undefined,
+          stockState:
+            req.query.stockState === 'LOW' || req.query.stockState === 'OUT' || req.query.stockState === 'IN_STOCK'
+              ? req.query.stockState
+              : 'ALL',
+          includeArchived: req.query.includeArchived === 'true',
+          search: typeof req.query.search === 'string' ? req.query.search : undefined,
+        }),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.INVENTORY}/parts/:id`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, [
+        'inventory:view',
+        'inventory:manage_parts',
+        'inventory:record_movements',
+        'inventory:adjust_stock',
+        'inventory:read',
+        'inventory:write',
+      ]);
+      res.json({ ok: true, data: getInventoryPartDetail(db, Number(req.params.id)) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.INVENTORY}/parts`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['inventory:manage_parts', 'inventory:write']);
+      const parsed = UpsertInventoryPartSchema.parse(req.body);
+      const isCreate = !parsed.id;
+      const saved = upsertInventoryPart(db, { id: session.userId, username: session.username }, parsed);
+      res.status(isCreate ? 201 : 200).json({ ok: true, data: saved });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.INVENTORY}/parts/:id/archive`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['inventory:manage_parts', 'inventory:write']);
+      const archived = req.body?.archived !== false;
+      res.json({
+        ok: true,
+        data: archiveInventoryPart(
+          db,
+          { id: session.userId, username: session.username },
+          Number(req.params.id),
+          archived
+        ),
       });
     } catch (err) {
       handleError(res, err);

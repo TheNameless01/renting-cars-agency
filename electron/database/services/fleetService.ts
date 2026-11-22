@@ -514,8 +514,8 @@ export function releaseVehicleBlockedPeriod(
 ) {
   const tx = db.transaction(() => {
     const block = db
-      .prepare<[number], { id: number; vehicle_id: number; is_active: number }>(
-        'SELECT id, vehicle_id, is_active FROM vehicle_blocked_periods WHERE id = ?'
+      .prepare<[number], { id: number; vehicle_id: number; block_type: string; is_active: number }>(
+        'SELECT id, vehicle_id, block_type, is_active FROM vehicle_blocked_periods WHERE id = ?'
       )
       .get(blockId);
 
@@ -528,7 +528,9 @@ export function releaseVehicleBlockedPeriod(
        WHERE id = ?`
     ).run(actor.id, blockId);
 
-    recomputeVehicleStatus(db, block.vehicle_id);
+    recomputeVehicleStatus(db, block.vehicle_id, {
+      releaseManualMaintenance: block.block_type === 'MAINTENANCE',
+    });
 
     writeAuditLog(db, {
       userId: actor.id,

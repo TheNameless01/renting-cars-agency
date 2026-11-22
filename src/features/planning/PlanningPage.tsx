@@ -414,9 +414,10 @@ export function PlanningPage() {
             </span>
           </div>
 
-          <div className="flex items-center gap-4 text-xs">
+          <div className="flex flex-wrap items-center gap-4 text-xs">
             <span className="text-blue-700 dark:text-blue-400 font-medium">■ {t.planning.legendContract}</span>
             <span className="text-amber-700 dark:text-amber-400 font-medium">■ {t.planning.legendReservation}</span>
+            <span className="text-orange-700 dark:text-orange-400 font-medium">■ {t.planning.legendMaintenance}</span>
             <span className="text-rose-700 dark:text-rose-400 font-medium">■ {t.planning.legendBlock}</span>
           </div>
 
@@ -495,6 +496,9 @@ export function PlanningPage() {
                             label = matching.reference;
                           } else if (matching.eventType === 'RESERVATION') {
                             cellBg = 'bg-amber-100 dark:bg-amber-950/60 text-amber-900 dark:text-amber-200';
+                            label = matching.reference;
+                          } else if (matching.eventType === 'MAINTENANCE') {
+                            cellBg = 'bg-orange-100 dark:bg-orange-950/60 text-orange-900 dark:text-orange-200';
                             label = matching.reference;
                           } else {
                             cellBg = 'bg-rose-100 dark:bg-rose-950/60 text-rose-900 dark:text-rose-200';

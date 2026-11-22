@@ -89,8 +89,19 @@ export const IPC_CHANNELS = {
   CONTRACTS_COMPLETE: 'contracts:complete',
   CONTRACTS_CANCEL: 'contracts:cancel',
 
+  INSPECTIONS_LIST: 'inspections:list',
+  INSPECTIONS_GET: 'inspections:get',
   INSPECTIONS_CREATE: 'inspections:create',
+  INSPECTIONS_UPDATE: 'inspections:update',
+  INSPECTIONS_FINALIZE: 'inspections:finalize',
   INSPECTIONS_GET_BY_CONTRACT: 'inspections:getByContract',
+  INSPECTIONS_UPLOAD_PHOTO: 'inspections:uploadPhoto',
+  INSPECTIONS_READ_PHOTO: 'inspections:readPhoto',
+  INSPECTIONS_DELETE_PHOTO: 'inspections:deletePhoto',
+  INSPECTIONS_GET_PDF_PAYLOAD: 'inspections:getPdfPayload',
+  DAMAGES_LIST: 'damages:list',
+  DAMAGES_ADD: 'damages:add',
+  DAMAGES_UPDATE_STATUS: 'damages:updateStatus',
 
   FINANCE_LIST_PAYMENTS: 'finance:listPayments',
   FINANCE_RECORD_PAYMENT: 'finance:recordPayment',
@@ -110,6 +121,7 @@ export const IPC_CHANNELS = {
 
   FINANCE_LIST_SUPPLIERS: 'finance:listSuppliers',
   FINANCE_CREATE_SUPPLIER: 'finance:createSupplier',
+  FINANCE_UPSERT_SUPPLIER: 'finance:upsertSupplier',
   FINANCE_LIST_EXPENSES: 'finance:listExpenses',
   FINANCE_RECORD_EXPENSE: 'finance:recordExpense',
   FINANCE_REVERSE_EXPENSE: 'finance:reverseExpense',
@@ -128,10 +140,23 @@ export const IPC_CHANNELS = {
   FINANCE_EXPORT_CSV: 'finance:exportCsv',
 
   MAINTENANCE_LIST: 'maintenance:list',
+  MAINTENANCE_GET: 'maintenance:get',
   MAINTENANCE_CREATE: 'maintenance:create',
+  MAINTENANCE_UPDATE: 'maintenance:update',
+  MAINTENANCE_READ_INVOICE: 'maintenance:readInvoice',
+  MAINTENANCE_TYPES_LIST: 'maintenance:listTypes',
+  MAINTENANCE_TYPES_UPSERT: 'maintenance:upsertType',
+  MAINTENANCE_VEHICLE_OVERVIEW: 'maintenance:vehicleOverview',
+  MAINTENANCE_SCHEDULE_UPSERT: 'maintenance:upsertSchedule',
 
+  INVENTORY_OVERVIEW: 'inventory:overview',
   INVENTORY_LIST: 'inventory:list',
+  INVENTORY_GET: 'inventory:get',
+  INVENTORY_UPSERT_PART: 'inventory:upsertPart',
+  INVENTORY_ARCHIVE_PART: 'inventory:archivePart',
+  INVENTORY_MOVEMENTS_LIST: 'inventory:listMovements',
   INVENTORY_RECORD_MOVEMENT: 'inventory:recordMovement',
+  INVENTORY_ADJUST_STOCK: 'inventory:adjustStock',
 
   DOCUMENTS_GENERATE: 'documents:generate',
   DOCUMENTS_LIST: 'documents:list',
@@ -139,6 +164,8 @@ export const IPC_CHANNELS = {
 
   NOTIFICATIONS_LIST: 'notifications:list',
   NOTIFICATIONS_MARK_READ: 'notifications:markRead',
+  NOTIFICATIONS_SYNC_ALERTS: 'notifications:syncAlerts',
+  NOTIFICATIONS_RESOLVE: 'notifications:resolve',
 
   AUDIT_LIST: 'audit:list',
 

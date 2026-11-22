@@ -20,10 +20,13 @@ function mapSupplier(r: any): Supplier {
     id: r.id,
     name: r.name,
     phone: r.phone ?? null,
+    email: r.email ?? null,
     address: r.address ?? null,
+    wilayaCode: r.wilaya_code ?? null,
     specialty: r.specialty ?? null,
     nifNumber: r.nif_number ?? null,
     notes: r.notes ?? null,
+    isArchived: r.is_archived === 1,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -57,38 +60,82 @@ function mapExpense(r: any) {
   };
 }
 
-export function listSuppliers(db: Database.Database): Supplier[] {
+export function listSuppliers(db: Database.Database, includeArchived = false): Supplier[] {
+  const where = includeArchived ? '' : 'WHERE COALESCE(is_archived, 0) = 0';
   return db
-    .prepare<[], any>('SELECT * FROM suppliers ORDER BY name ASC, id DESC')
+    .prepare<[], any>(`SELECT * FROM suppliers ${where} ORDER BY is_archived ASC, name ASC, id DESC`)
     .all()
     .map(mapSupplier);
 }
 
-export function createSupplier(
+export function upsertSupplier(
   db: Database.Database,
   actor: { id: number; username: string },
   input: {
+    id?: number;
     name: string;
     phone?: string | null;
+    email?: string | null;
     address?: string | null;
+    wilayaCode?: string | null;
     specialty?: string | null;
     nifNumber?: string | null;
     notes?: string | null;
+    isArchived?: boolean;
   }
 ): Supplier {
   const tx = db.transaction(() => {
+    if (input.id) {
+      const existing = db.prepare<[number], any>('SELECT * FROM suppliers WHERE id = ?').get(input.id);
+      if (!existing) throw new AuthError('NOT_FOUND', 'Fournisseur introuvable');
+
+      db.prepare(
+        `UPDATE suppliers
+         SET name = ?, phone = ?, email = ?, address = ?, wilaya_code = ?,
+             specialty = ?, nif_number = ?, notes = ?,
+             is_archived = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE id = ?`
+      ).run(
+        input.name.trim(),
+        input.phone?.trim() || null,
+        input.email?.trim() || null,
+        input.address?.trim() || null,
+        input.wilayaCode?.trim() || null,
+        input.specialty?.trim() || null,
+        input.nifNumber?.trim() || null,
+        input.notes?.trim() || null,
+        input.isArchived !== undefined ? (input.isArchived ? 1 : 0) : Number(existing.is_archived ?? 0),
+        input.id
+      );
+
+      const updated = mapSupplier(db.prepare<[number], any>('SELECT * FROM suppliers WHERE id = ?').get(input.id));
+      writeAuditLog(db, {
+        userId: actor.id,
+        usernameSnapshot: actor.username,
+        operation: 'SUPPLIER_UPDATED',
+        entityType: 'suppliers',
+        entityId: input.id,
+        previousValue: mapSupplier(existing),
+        newValue: updated,
+      });
+      return updated;
+    }
+
     const res = db
       .prepare(
-        `INSERT INTO suppliers (name, phone, address, specialty, nif_number, notes)
-         VALUES (?, ?, ?, ?, ?, ?)`
+        `INSERT INTO suppliers (name, phone, email, address, wilaya_code, specialty, nif_number, notes, is_archived)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         input.name.trim(),
         input.phone?.trim() || null,
+        input.email?.trim() || null,
         input.address?.trim() || null,
+        input.wilayaCode?.trim() || null,
         input.specialty?.trim() || null,
         input.nifNumber?.trim() || null,
-        input.notes?.trim() || null
+        input.notes?.trim() || null,
+        input.isArchived ? 1 : 0
       );
 
     const id = Number(res.lastInsertRowid);
@@ -107,6 +154,25 @@ export function createSupplier(
   });
 
   return tx();
+}
+
+export function createSupplier(
+  db: Database.Database,
+  actor: { id: number; username: string },
+  input: {
+    id?: number;
+    name: string;
+    phone?: string | null;
+    email?: string | null;
+    address?: string | null;
+    wilayaCode?: string | null;
+    specialty?: string | null;
+    nifNumber?: string | null;
+    notes?: string | null;
+    isArchived?: boolean;
+  }
+): Supplier {
+  return upsertSupplier(db, actor, input);
 }
 
 export function listExpenses(

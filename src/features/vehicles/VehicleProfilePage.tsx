@@ -3,16 +3,23 @@ import {
   Archive,
   ArrowLeft,
   CalendarOff,
+  Camera,
   CheckCircle2,
+  ClipboardCheck,
+  Download,
   FileText,
   Lock,
   Pencil,
   Plus,
+  Settings2,
+  Wrench,
 } from 'lucide-react';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { fromMinorUnits, toMinorUnits } from '../../../shared/constants/algeria.ts';
+import { getDiagramZoneLabel } from '../../../shared/constants/inspections.ts';
 import type {
+  MaintenanceStatus,
   VehicleDocType,
   VehicleDocument,
   VehicleFuelType,
@@ -24,9 +31,20 @@ import { ModalDialog } from '../../components/ModalDialog.tsx';
 import { useToast } from '../../components/Toast.tsx';
 import { useAuth } from '../../hooks/useAuth.tsx';
 import { useI18n } from '../../hooks/useI18n.tsx';
-import { erpClient, type VehicleFinanceSummaryDto, type VehicleProfileDto } from '../../lib/apiClient.ts';
+import {
+  erpClient,
+  type InspectionListItemDto,
+  type VehicleDamageListItemDto,
+  type VehicleFinanceSummaryDto,
+  type VehicleMaintenanceDueItemDto,
+  type VehicleMaintenanceOverviewDto,
+  type VehicleProfileDto,
+} from '../../lib/apiClient.ts';
 import { formatCurrencyMinor, formatDateTimeAlgiers, formatDigits } from '../../lib/formatters.ts';
 import { ExpensesTab } from '../finance/ExpensesTab.tsx';
+import { DamageResolutionModal } from '../inspections/DamageResolutionModal.tsx';
+import { MaintenanceRecordModal } from '../maintenance/MaintenanceRecordModal.tsx';
+import { MaintenanceScheduleModal } from '../maintenance/MaintenanceScheduleModal.tsx';
 
 type VehicleTab =
   | 'general'
@@ -57,6 +75,28 @@ export function VehicleProfilePage() {
 
   const [profile, setProfile] = useState<VehicleProfileDto | null>(null);
   const [financeSummary, setFinanceSummary] = useState<VehicleFinanceSummaryDto | null>(null);
+  const [vehicleDamages, setVehicleDamages] = useState<VehicleDamageListItemDto[]>([]);
+  const [vehicleInspections, setVehicleInspections] = useState<InspectionListItemDto[]>([]);
+  const [vehiclePhotos, setVehiclePhotos] = useState<
+    Array<{
+      id: number;
+      inspectionId: number;
+      inspectionNumber: string;
+      stage: string;
+      inspectedAt: string;
+      caption: string | null;
+      originalFileName: string | null;
+      dataUrl: string;
+    }>
+  >([]);
+  const [selectedDamage, setSelectedDamage] = useState<VehicleDamageListItemDto | null>(null);
+  const [maintenanceOverview, setMaintenanceOverview] = useState<VehicleMaintenanceOverviewDto | null>(
+    null
+  );
+  const [maintModalOpen, setMaintModalOpen] = useState(false);
+  const [editingMaintId, setEditingMaintId] = useState<number | null>(null);
+  const [defaultMaintTypeId, setDefaultMaintTypeId] = useState<number | undefined>(undefined);
+  const [scheduleModalItem, setScheduleModalItem] = useState<VehicleMaintenanceDueItemDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<VehicleTab>('general');
   // ...
@@ -64,6 +104,28 @@ export function VehicleProfilePage() {
     hasPermission('finance:read') ||
     hasPermission('finance:manage_expenses') ||
     hasPermission('reports:view');
+  const canViewInspections =
+    hasPermission('inspections:view') ||
+    hasPermission('inspections:create') ||
+    hasPermission('inspections:write') ||
+    hasPermission('vehicles:read');
+  const canViewMaintenance =
+    hasPermission('maintenance:view') ||
+    hasPermission('maintenance:create') ||
+    hasPermission('maintenance:update') ||
+    hasPermission('maintenance:complete') ||
+    hasPermission('maintenance:write') ||
+    hasPermission('vehicles:read');
+  const canCreateMaintenance =
+    hasPermission('maintenance:create') || hasPermission('maintenance:write');
+  const canUpdateMaintenance =
+    hasPermission('maintenance:update') ||
+    hasPermission('maintenance:complete') ||
+    hasPermission('maintenance:write');
+  const canCustomizeMaintSchedule =
+    hasPermission('maintenance:manage_types') ||
+    hasPermission('maintenance:update') ||
+    hasPermission('maintenance:write');
 
   // Edit vehicle modal
   const [showEditModal, setShowEditModal] = useState(false);
@@ -157,12 +219,77 @@ export function VehicleProfilePage() {
       } else {
         setFinanceSummary(null);
       }
+      if (canViewInspections) {
+        try {
+          const [dmgRows, inspRows] = await Promise.all([
+            erpClient.listVehicleDamages({ vehicleId: Number(id) }),
+            erpClient.listInspections({ vehicleId: Number(id) }),
+          ]);
+          setVehicleDamages(dmgRows);
+          setVehicleInspections(inspRows);
+
+          const inspectionsWithPhotos = inspRows.filter((i) => i.photoCount > 0).slice(0, 8);
+          const photoCards: Array<{
+            id: number;
+            inspectionId: number;
+            inspectionNumber: string;
+            stage: string;
+            inspectedAt: string;
+            caption: string | null;
+            originalFileName: string | null;
+            dataUrl: string;
+          }> = [];
+          for (const insp of inspectionsWithPhotos) {
+            const det = await erpClient.getInspectionDetail(insp.id);
+            for (const ph of det.photos) {
+              try {
+                const raw = await erpClient.readInspectionPhoto(ph.id);
+                photoCards.push({
+                  id: ph.id,
+                  inspectionId: insp.id,
+                  inspectionNumber: insp.inspectionNumber,
+                  stage: insp.stage,
+                  inspectedAt: insp.inspectedAt,
+                  caption: ph.caption,
+                  originalFileName: ph.originalFileName,
+                  dataUrl: `data:${raw.mimeType};base64,${raw.base64Data}`,
+                });
+              } catch {
+                // Skip unreadable encrypted photo
+              }
+            }
+          }
+          setVehiclePhotos(photoCards);
+        } catch {
+          setVehicleDamages([]);
+          setVehicleInspections([]);
+          setVehiclePhotos([]);
+        }
+      }
+      if (canViewMaintenance) {
+        try {
+          const ov = await erpClient.getVehicleMaintenanceOverview(Number(id));
+          setMaintenanceOverview(ov);
+        } catch {
+          setMaintenanceOverview(null);
+        }
+      } else {
+        setMaintenanceOverview(null);
+      }
     } catch (err) {
       showError(err instanceof Error ? err.message : t.common.error);
     } finally {
       setLoading(false);
     }
-  }, [canViewVehicleFinance, id, showError, syncEditFields, t.common.error]);
+  }, [
+    canViewInspections,
+    canViewMaintenance,
+    canViewVehicleFinance,
+    id,
+    showError,
+    syncEditFields,
+    t.common.error,
+  ]);
 
   useEffect(() => {
     void loadProfile();
@@ -321,6 +448,24 @@ export function VehicleProfilePage() {
       showError(err instanceof Error ? err.message : t.common.error);
     } finally {
       setReleasingBlock(false);
+    }
+  };
+
+  const handleDownloadMaintInvoice = async (recordId: number) => {
+    try {
+      const doc = await erpClient.readMaintenanceInvoice(recordId);
+      const byteChars = atob(doc.base64Data);
+      const byteArr = new Uint8Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i += 1) byteArr[i] = byteChars.charCodeAt(i);
+      const blob = new Blob([byteArr], { type: doc.mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = doc.originalFileName;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      showError(err instanceof Error ? err.message : t.common.error);
     }
   };
 
@@ -789,10 +934,445 @@ export function VehicleProfilePage() {
         )
       )}
 
-      {(activeTab === 'maintenance' || activeTab === 'photos') && (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-8 text-center">
-          <Lock className="w-6 h-6 mx-auto mb-2 text-slate-400" />
-          <p className="text-sm text-slate-600 dark:text-slate-400">{t.vehicles.phaseFutureNotice}</p>
+      {activeTab === 'photos' && (
+        <div className="space-y-6">
+          {/* Damage History */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
+            <div className="px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                {t.inspections.tabDamages} ({formatDigits(vehicleDamages.length, numerals)})
+              </span>
+              <Link
+                to="/inspections"
+                className="text-xs font-medium text-blue-700 dark:text-blue-400 hover:underline"
+              >
+                {t.inspections.title}
+              </Link>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="border-b border-slate-200 dark:border-slate-800 text-slate-500">
+                  <tr>
+                    <th className="px-4 py-2.5 text-start">Code</th>
+                    <th className="px-4 py-2.5 text-start">{t.inspections.selectedZone}</th>
+                    <th className="px-4 py-2.5 text-start">{t.inspections.damageDescription}</th>
+                    <th className="px-4 py-2.5 text-start">{t.vehicles.statusLabel}</th>
+                    <th className="px-4 py-2.5 text-end">{t.users.actions}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                  {vehicleDamages.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-6 text-center text-slate-500">
+                        {t.inspections.emptyDamages}
+                      </td>
+                    </tr>
+                  ) : (
+                    vehicleDamages.map((d) => (
+                      <tr key={d.id}>
+                        <td className="px-4 py-2.5 font-mono-tabular font-semibold">
+                          <div>{d.damageCode}</div>
+                          {d.contractNumber && d.contractId && (
+                            <Link
+                              to={`/contracts/${d.contractId}`}
+                              className="text-[11px] font-normal text-blue-700 dark:text-blue-400 hover:underline"
+                            >
+                              {d.contractNumber}
+                            </Link>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <div>{getDiagramZoneLabel(d.zoneCode, lang)}</div>
+                          <div className="text-[11px] text-slate-500">
+                            {t.inspections.damageTypes[d.damageType]} ·{' '}
+                            {t.inspections.damageSeverities[d.severity]}
+                          </div>
+                        </td>
+                        <td className="px-4 py-2.5 max-w-sm">
+                          <div>{d.description}</div>
+                          <div className="text-[11px] text-slate-500 font-mono-tabular">
+                            {formatDateTimeAlgiers(d.reportedAt, lang, numerals)}
+                          </div>
+                        </td>
+                        <td className="px-4 py-2.5">{t.inspections.damageStatuses[d.status]}</td>
+                        <td className="px-4 py-2.5 text-end">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedDamage(d)}
+                            className="px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                          >
+                            {t.common.view}
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Inspection Photos Gallery */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <Camera className="w-4 h-4 text-blue-700 dark:text-blue-400" />
+                {t.inspections.photosTitle} ({formatDigits(vehiclePhotos.length, numerals)})
+              </h3>
+              <span className="text-xs text-slate-500 flex items-center gap-1">
+                <ClipboardCheck className="w-3.5 h-3.5" />
+                {formatDigits(vehicleInspections.length, numerals)} {t.inspections.tabInspections}
+              </span>
+            </div>
+            {vehiclePhotos.length === 0 ? (
+              <div className="py-6 text-center text-xs text-slate-500">—</div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                {vehiclePhotos.map((ph) => (
+                  <div
+                    key={ph.id}
+                    className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden bg-slate-50 dark:bg-slate-950"
+                  >
+                    <img
+                      src={ph.dataUrl}
+                      alt={ph.caption || ph.originalFileName || ph.inspectionNumber}
+                      className="w-full h-36 object-cover"
+                    />
+                    <div className="p-2.5 text-[11px] space-y-0.5">
+                      <div className="font-mono-tabular font-semibold text-slate-800 dark:text-slate-200">
+                        {ph.inspectionNumber} ·{' '}
+                        {ph.stage === 'DEPARTURE'
+                          ? t.inspections.stageDeparture
+                          : t.inspections.stageReturn}
+                      </div>
+                      <div className="truncate text-slate-600 dark:text-slate-400">
+                        {ph.caption || ph.originalFileName || '—'}
+                      </div>
+                      <div className="font-mono-tabular text-slate-400">
+                        {formatDateTimeAlgiers(ph.inspectedAt, lang, numerals)}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'maintenance' && (
+        <div className="space-y-6">
+          {/* Active Vehicle Operational Alerts */}
+          {maintenanceOverview && maintenanceOverview.alerts.length > 0 && (
+            <div className="rounded-xl border border-amber-200 dark:border-amber-900 bg-amber-50/70 dark:bg-amber-950/30 p-4 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-xs font-semibold text-amber-900 dark:text-amber-200">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                  <span>
+                    {t.alerts.panelTitle} ({formatDigits(maintenanceOverview.alerts.length, numerals)})
+                  </span>
+                </div>
+                {canCreateMaintenance && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingMaintId(null);
+                      setDefaultMaintTypeId(undefined);
+                      setMaintModalOpen(true);
+                    }}
+                    className="px-2.5 py-1 rounded bg-amber-700 hover:bg-amber-600 text-white text-[11px] font-medium"
+                  >
+                    {t.maintenance.scheduleActionBtn}
+                  </button>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                {maintenanceOverview.alerts.map((al) => (
+                  <div
+                    key={al.id}
+                    className="flex flex-wrap items-center justify-between gap-2 text-xs bg-white/80 dark:bg-slate-900/80 px-3 py-2 rounded-lg border border-amber-200/70 dark:border-amber-900/60"
+                  >
+                    <div>
+                      <span
+                        className={`inline-block me-2 px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                          al.severity === 'CRITICAL'
+                            ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300'
+                            : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                        }`}
+                      >
+                        {t.alerts.severities[al.severity]}
+                      </span>
+                      <span className="font-medium text-slate-900 dark:text-slate-100">
+                        {lang === 'ar' ? al.titleAr : al.titleFr}
+                      </span>
+                      <span className="text-slate-600 dark:text-slate-400 ms-2">
+                        {lang === 'ar' ? al.messageAr : al.messageFr}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Header Action */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+              <Wrench className="w-4 h-4 text-blue-800 dark:text-blue-400" />
+              <span>{t.maintenance.scheduleTitle}</span>
+            </h3>
+            {canCreateMaintenance && !vehicle.isArchived && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingMaintId(null);
+                  setDefaultMaintTypeId(undefined);
+                  setMaintModalOpen(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-blue-900 dark:bg-blue-700 text-white text-xs font-medium hover:bg-blue-800 dark:hover:bg-blue-600"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>{t.maintenance.newIntervention}</span>
+              </button>
+            )}
+          </div>
+
+          {/* Preventive Maintenance Schedule Table */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-500">
+                  <tr>
+                    <th className="px-4 py-3 text-start">{t.maintenance.maintenanceType}</th>
+                    <th className="px-4 py-3 text-start">{t.maintenance.lastDone}</th>
+                    <th className="px-4 py-3 text-start">{t.maintenance.nextDue}</th>
+                    <th className="px-4 py-3 text-start">{t.maintenance.remaining}</th>
+                    <th className="px-4 py-3 text-start">{t.maintenance.statusLabel}</th>
+                    <th className="px-4 py-3 text-end">{t.users.actions}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                  {!maintenanceOverview || maintenanceOverview.dueSummary.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
+                        {t.maintenance.emptyDueSummary}
+                      </td>
+                    </tr>
+                  ) : (
+                    maintenanceOverview.dueSummary.map((item) => (
+                      <tr key={item.maintenanceTypeId} className={!item.isScheduleActive ? 'opacity-55' : ''}>
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-slate-900 dark:text-slate-100">
+                            {lang === 'ar' ? item.nameAr : item.nameFr}
+                          </div>
+                          <div className="text-[11px] text-slate-500 font-mono-tabular">
+                            {item.kmInterval != null
+                              ? `${formatDigits(item.kmInterval.toLocaleString(), numerals)} km`
+                              : '—'}{' '}
+                            ·{' '}
+                            {item.dayInterval != null
+                              ? `${formatDigits(item.dayInterval, numerals)} ${t.common.days}`
+                              : '—'}{' '}
+                            <span className="ms-1">
+                              (
+                              {!item.isScheduleActive
+                                ? t.maintenance.inactiveScheduleBadge
+                                : item.hasCustomSchedule
+                                  ? t.maintenance.customScheduleBadge
+                                  : t.maintenance.defaultScheduleBadge}
+                              )
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 font-mono-tabular">
+                          {item.lastPerformedDate ? (
+                            <>
+                              <div>{formatDigits(item.lastPerformedDate, numerals)}</div>
+                              {item.lastOdometerKm != null && (
+                                <div className="text-[11px] text-slate-500">
+                                  {formatDigits(item.lastOdometerKm.toLocaleString(), numerals)} km
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <span className="text-slate-400">{t.maintenance.neverDone}</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 font-mono-tabular">
+                          <div>{item.nextDueDate ? formatDigits(item.nextDueDate, numerals) : '—'}</div>
+                          {item.nextDueOdometerKm != null && (
+                            <div className="text-[11px] text-slate-500">
+                              {formatDigits(item.nextDueOdometerKm.toLocaleString(), numerals)} km
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 font-mono-tabular">
+                          <div>
+                            {item.remainingKm != null
+                              ? `${formatDigits(item.remainingKm.toLocaleString(), numerals)} km`
+                              : '—'}
+                          </div>
+                          <div className="text-[11px] text-slate-500">
+                            {item.remainingDays != null
+                              ? `${formatDigits(item.remainingDays, numerals)} ${t.common.days}`
+                              : '—'}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`inline-flex px-2 py-0.5 rounded text-[11px] font-semibold ${
+                              item.alertState === 'OVERDUE'
+                                ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300'
+                                : item.alertState === 'DUE'
+                                  ? 'bg-orange-100 text-orange-800 dark:bg-orange-950/60 dark:text-orange-300'
+                                  : item.alertState === 'APPROACHING'
+                                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                                    : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300'
+                            }`}
+                          >
+                            {t.maintenance.alertStates[item.alertState]}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-end">
+                          <div className="inline-flex items-center gap-1.5">
+                            {canCustomizeMaintSchedule && (
+                              <button
+                                type="button"
+                                onClick={() => setScheduleModalItem(item)}
+                                title={t.maintenance.customizeSchedule}
+                                className="p-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                              >
+                                <Settings2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            {canCreateMaintenance && !vehicle.isArchived && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingMaintId(null);
+                                  setDefaultMaintTypeId(item.maintenanceTypeId);
+                                  setMaintModalOpen(true);
+                                }}
+                                className="px-2.5 py-1 rounded bg-blue-900 hover:bg-blue-800 dark:bg-blue-700 dark:hover:bg-blue-600 text-white font-medium"
+                              >
+                                {t.maintenance.scheduleActionBtn}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Maintenance History Table */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
+            <div className="px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                {t.maintenance.tabInterventions} (
+                {formatDigits(maintenanceOverview?.records.length ?? 0, numerals)})
+              </span>
+              <Link
+                to="/maintenance"
+                className="text-xs font-medium text-blue-700 dark:text-blue-400 hover:underline"
+              >
+                {t.maintenance.title}
+              </Link>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="border-b border-slate-200 dark:border-slate-800 text-slate-500">
+                  <tr>
+                    <th className="px-4 py-2.5 text-start">{t.maintenance.recordNumber}</th>
+                    <th className="px-4 py-2.5 text-start">{t.maintenance.maintenanceType}</th>
+                    <th className="px-4 py-2.5 text-start">{t.maintenance.statusLabel}</th>
+                    <th className="px-4 py-2.5 text-start">{t.maintenance.performedDate}</th>
+                    <th className="px-4 py-2.5 text-end">{t.maintenance.odometerKm}</th>
+                    <th className="px-4 py-2.5 text-end">{t.maintenance.totalCostDzd}</th>
+                    <th className="px-4 py-2.5 text-end">{t.users.actions}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                  {!maintenanceOverview || maintenanceOverview.records.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-6 text-center text-slate-500">
+                        {t.maintenance.emptyRecords}
+                      </td>
+                    </tr>
+                  ) : (
+                    maintenanceOverview.records.map((rec) => (
+                      <tr key={rec.id}>
+                        <td className="px-4 py-2.5 font-mono-tabular font-semibold">
+                          <div>{rec.recordNumber}</div>
+                          {rec.isEmergency && (
+                            <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 text-[10px]">
+                              {t.maintenance.emergencyBadge}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 max-w-xs">
+                          <div className="font-medium">
+                            {lang === 'ar' ? rec.maintenanceTypeNameAr : rec.maintenanceTypeNameFr}
+                          </div>
+                          <div className="text-[11px] text-slate-500 truncate">{rec.workDescription}</div>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className="font-medium">
+                            {t.maintenance.statuses[rec.status as MaintenanceStatus]}
+                          </span>
+                          {rec.linkedExpenseNumber && (
+                            <div className="text-[10px] font-mono-tabular text-emerald-700 dark:text-emerald-400">
+                              {rec.linkedExpenseNumber}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 font-mono-tabular">
+                          {formatDigits(rec.performedDate, numerals)}
+                        </td>
+                        <td className="px-4 py-2.5 text-end font-mono-tabular">
+                          {formatDigits(rec.odometerKm.toLocaleString(), numerals)} km
+                        </td>
+                        <td className="px-4 py-2.5 text-end font-mono-tabular font-semibold">
+                          {formatCurrencyMinor(rec.totalCostMinor, 'DZD', lang, numerals)}
+                        </td>
+                        <td className="px-4 py-2.5 text-end">
+                          <div className="inline-flex items-center gap-1.5">
+                            {rec.invoiceFilePath && (
+                              <button
+                                type="button"
+                                onClick={() => void handleDownloadMaintInvoice(rec.id)}
+                                title={rec.invoiceOriginalName || t.maintenance.viewInvoice}
+                                className="p-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            {canUpdateMaintenance && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingMaintId(rec.id);
+                                  setDefaultMaintTypeId(undefined);
+                                  setMaintModalOpen(true);
+                                }}
+                                className="px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                              >
+                                {t.dialogs.editAction}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1245,6 +1825,32 @@ export function VehicleProfilePage() {
         description={t.dialogs.releaseBlockDesc}
         confirmLabel={t.vehicles.blocks.release}
       />
+
+      <DamageResolutionModal
+        open={Boolean(selectedDamage)}
+        damage={selectedDamage}
+        onClose={() => setSelectedDamage(null)}
+        onUpdated={() => void loadProfile()}
+      />
+
+      <MaintenanceRecordModal
+        open={maintModalOpen}
+        recordId={editingMaintId}
+        defaultVehicleId={vehicle.id}
+        defaultMaintenanceTypeId={defaultMaintTypeId}
+        onClose={() => setMaintModalOpen(false)}
+        onSaved={() => void loadProfile()}
+      />
+
+      {scheduleModalItem && (
+        <MaintenanceScheduleModal
+          open={Boolean(scheduleModalItem)}
+          vehicleId={vehicle.id}
+          item={scheduleModalItem}
+          onClose={() => setScheduleModalItem(null)}
+          onSaved={() => void loadProfile()}
+        />
+      )}
     </div>
   );
 }

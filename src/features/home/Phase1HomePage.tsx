@@ -1,22 +1,26 @@
 import {
+  AlertTriangle,
   ArrowRight,
   BarChart3,
+  Bell,
   CalendarDays,
   Car,
+  CheckCircle2,
   Database,
   FileText,
   MapPin,
+  RefreshCw,
   Settings,
   ShieldCheck,
   Users,
   Vault,
   Wallet,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth.tsx';
 import { useI18n } from '../../hooks/useI18n.tsx';
-import { erpClient } from '../../lib/apiClient.ts';
+import { erpClient, type AppNotificationDto } from '../../lib/apiClient.ts';
 import { formatCurrencyMinor, formatDigits } from '../../lib/formatters.ts';
 
 interface LiveOperationalSummary {
@@ -36,9 +40,35 @@ export function Phase1HomePage() {
   const { session, runtimeMode, hasPermission } = useAuth();
   const { t, lang, numerals } = useI18n();
   const [summary, setSummary] = useState<LiveOperationalSummary | null>(null);
+  const [alerts, setAlerts] = useState<AppNotificationDto[]>([]);
+  const [syncingAlerts, setSyncingAlerts] = useState(false);
 
   const canViewFinanceReport = hasPermission('finance:read') || hasPermission('reports:view');
   const canViewCash = hasPermission('finance:cash_register') || hasPermission('finance:read');
+  const canResolveAlert =
+    hasPermission('maintenance:update') ||
+    hasPermission('maintenance:complete') ||
+    hasPermission('maintenance:write') ||
+    hasPermission('inventory:manage_parts') ||
+    hasPermission('inventory:adjust_stock') ||
+    hasPermission('vehicles:write');
+
+  const refreshAlerts = useCallback(async () => {
+    setSyncingAlerts(true);
+    try {
+      const synced = await erpClient.syncOperationalAlerts();
+      setAlerts(synced);
+    } catch {
+      try {
+        const fallback = await erpClient.listOperationalAlerts({ includeResolved: false });
+        setAlerts(fallback);
+      } catch {
+        setAlerts([]);
+      }
+    } finally {
+      setSyncingAlerts(false);
+    }
+  }, []);
 
   useEffect(() => {
     const now = new Date();
@@ -57,33 +87,69 @@ export function Phase1HomePage() {
       canViewCash
         ? erpClient.getCurrentCashSession().catch(() => null)
         : Promise.resolve(null),
+      erpClient
+        .syncOperationalAlerts()
+        .catch(() => erpClient.listOperationalAlerts({ includeResolved: false }).catch(() => [])),
     ])
-      .then(([wilayas, vehicles, customers, contracts, reservations, finReport, cashCurrent]) => {
-        const cashBalanceMinor = cashCurrent?.session
-          ? cashCurrent.session.expectedClosingMinor
-          : finReport
-            ? (finReport.summary.openCashSessionBalanceMinor ?? finReport.summary.lastClosedCashBalanceMinor)
-            : cashCurrent
-              ? cashCurrent.suggestedOpeningBalanceMinor
-              : null;
+      .then(
+        ([
+          wilayas,
+          vehicles,
+          customers,
+          contracts,
+          reservations,
+          finReport,
+          cashCurrent,
+          syncedAlerts,
+        ]) => {
+          const cashBalanceMinor = cashCurrent?.session
+            ? cashCurrent.session.expectedClosingMinor
+            : finReport
+              ? (finReport.summary.openCashSessionBalanceMinor ?? finReport.summary.lastClosedCashBalanceMinor)
+              : cashCurrent
+                ? cashCurrent.suggestedOpeningBalanceMinor
+                : null;
 
-        setSummary({
-          wilayas: wilayas.length,
-          vehiclesTotal: vehicles.length,
-          vehiclesAvailable: vehicles.filter((v) => v.status === 'AVAILABLE').length,
-          customersTotal: customers.length,
-          contractsActive: contracts.filter((c) => c.status === 'ACTIVE' || c.status === 'EXTENDED').length,
-          reservationsOpen: reservations.filter((r) => r.status === 'PENDING' || r.status === 'CONFIRMED').length,
-          cashBalanceMinor,
-          cashSessionOpen: Boolean(cashCurrent?.session || finReport?.summary.openCashSessionDate),
-          heldDepositsDzdMinor: finReport ? finReport.summary.depositsCurrentlyHeldDzdMinor : null,
-          monthCollectedNetMinor: finReport ? finReport.summary.collectedNetMinor : null,
-        });
-      })
+          setSummary({
+            wilayas: wilayas.length,
+            vehiclesTotal: vehicles.length,
+            vehiclesAvailable: vehicles.filter((v) => v.status === 'AVAILABLE').length,
+            customersTotal: customers.length,
+            contractsActive: contracts.filter((c) => c.status === 'ACTIVE' || c.status === 'EXTENDED').length,
+            reservationsOpen: reservations.filter((r) => r.status === 'PENDING' || r.status === 'CONFIRMED').length,
+            cashBalanceMinor,
+            cashSessionOpen: Boolean(cashCurrent?.session || finReport?.summary.openCashSessionDate),
+            heldDepositsDzdMinor: finReport ? finReport.summary.depositsCurrentlyHeldDzdMinor : null,
+            monthCollectedNetMinor: finReport ? finReport.summary.collectedNetMinor : null,
+          });
+          setAlerts(syncedAlerts);
+        }
+      )
       .catch(() => setSummary(null));
   }, [canViewCash, canViewFinanceReport]);
 
+  const handleMarkAlertRead = async (alertId: number) => {
+    try {
+      await erpClient.markOperationalAlertRead(alertId);
+      setAlerts((prev) => prev.map((a) => (a.id === alertId ? { ...a, isRead: true } : a)));
+    } catch {
+      // ignore non-critical
+    }
+  };
+
+  const handleResolveAlert = async (alertId: number) => {
+    try {
+      await erpClient.resolveOperationalAlert(alertId);
+      setAlerts((prev) => prev.filter((a) => a.id !== alertId));
+    } catch {
+      // ignore non-critical
+    }
+  };
+
   if (!session) return null;
+
+  const criticalAlertsCount = alerts.filter((a) => a.severity === 'CRITICAL').length;
+  const warningAlertsCount = alerts.filter((a) => a.severity === 'WARNING').length;
 
   return (
     <div className="space-y-6">
@@ -221,6 +287,126 @@ export function Phase1HomePage() {
           )}
         </div>
       )}
+
+      {/* Operational Alerts Panel */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
+        <div className="px-5 py-3.5 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Bell className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+              {t.alerts.panelTitle}
+            </h3>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="px-2 py-0.5 rounded bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 font-mono-tabular font-semibold">
+              {formatDigits(criticalAlertsCount, numerals)} {t.alerts.criticalCount}
+            </span>
+            <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 font-mono-tabular font-semibold">
+              {formatDigits(warningAlertsCount, numerals)} {t.alerts.warningCount}
+            </span>
+            <Link
+              to="/maintenance"
+              className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 font-medium hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              {t.alerts.openMaintenance}
+            </Link>
+            <button
+              type="button"
+              disabled={syncingAlerts}
+              onClick={() => void refreshAlerts()}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 font-medium hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${syncingAlerts ? 'animate-spin' : ''}`} />
+              <span>{t.alerts.refreshSync}</span>
+            </button>
+          </div>
+        </div>
+
+        {alerts.length === 0 ? (
+          <div className="p-6 text-center text-xs text-slate-500 flex items-center justify-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+            <span>{t.alerts.allClear}</span>
+          </div>
+        ) : (
+          <div className="divide-y divide-slate-200 dark:divide-slate-800 max-h-80 overflow-y-auto">
+            {alerts.slice(0, 12).map((al) => {
+              const categoryLabel =
+                t.alerts.categories[al.category as keyof typeof t.alerts.categories] ?? al.category;
+              return (
+                <div
+                  key={al.id}
+                  className="px-5 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2"
+                >
+                  <div className="space-y-0.5 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                      <span
+                        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-semibold ${
+                          al.severity === 'CRITICAL'
+                            ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300'
+                            : al.severity === 'WARNING'
+                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                              : 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300'
+                        }`}
+                      >
+                        {al.severity === 'CRITICAL' && <AlertTriangle className="w-3 h-3" />}
+                        {t.alerts.severities[al.severity]}
+                      </span>
+                      <span className="text-slate-500">{categoryLabel}</span>
+                      {!al.isRead && (
+                        <span className="px-1.5 py-0.5 rounded bg-blue-900 text-white dark:bg-blue-600 text-[10px]">
+                          {t.alerts.unreadBadge}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+                      {lang === 'ar' ? al.titleAr : al.titleFr}
+                    </div>
+                    <div className="text-xs text-slate-600 dark:text-slate-400 truncate">
+                      {lang === 'ar' ? al.messageAr : al.messageFr}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {al.entityType === 'vehicle' && al.entityId && (
+                      <Link
+                        to={`/vehicles/${al.entityId}`}
+                        className="px-2 py-1 rounded border border-slate-300 dark:border-slate-700 text-[11px] font-medium hover:bg-slate-100 dark:hover:bg-slate-800"
+                      >
+                        {t.alerts.openVehicle}
+                      </Link>
+                    )}
+                    {(al.entityType === 'inventory_part' || al.category === 'LOW_STOCK') && (
+                      <Link
+                        to="/inventory"
+                        className="px-2 py-1 rounded border border-slate-300 dark:border-slate-700 text-[11px] font-medium hover:bg-slate-100 dark:hover:bg-slate-800"
+                      >
+                        {t.nav.inventory}
+                      </Link>
+                    )}
+                    {!al.isRead && (
+                      <button
+                        type="button"
+                        onClick={() => void handleMarkAlertRead(al.id)}
+                        className="px-2 py-1 rounded border border-slate-300 dark:border-slate-700 text-[11px] font-medium hover:bg-slate-100 dark:hover:bg-slate-800"
+                      >
+                        {t.alerts.markRead}
+                      </button>
+                    )}
+                    {canResolveAlert && (
+                      <button
+                        type="button"
+                        onClick={() => void handleResolveAlert(al.id)}
+                        className="px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 dark:bg-slate-700 dark:hover:bg-slate-600 text-white text-[11px] font-medium"
+                      >
+                        {t.alerts.resolveAction}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {/* System & Security Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
