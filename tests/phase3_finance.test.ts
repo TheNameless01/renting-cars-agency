@@ -651,7 +651,8 @@ test('Phase 3 Financial Management enforces accounting rules, cash reconciliatio
     });
     assert.equal(csvRes.ok, true);
     assert.equal(csvRes.data.csvContent.startsWith('\uFEFF'), true);
-    assert.match(csvRes.data.csvContent, /V-FIN-01/);
+    assert.match(csvRes.data.csvContent, /00456-126-16/);
+    assert.match(csvRes.data.csvContent, /Hyundai i20/);
   } finally {
     kernel.shutdown();
     fs.rmSync(root, { recursive: true, force: true });
