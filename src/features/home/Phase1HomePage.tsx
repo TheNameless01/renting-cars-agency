@@ -310,6 +310,12 @@ export function Phase1HomePage() {
             >
               {t.alerts.openMaintenance}
             </Link>
+            <Link
+              to="/inventory"
+              className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 font-medium hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              {t.nav.inventory}
+            </Link>
             <button
               type="button"
               disabled={syncingAlerts}
@@ -380,6 +386,14 @@ export function Phase1HomePage() {
                         className="px-2 py-1 rounded border border-slate-300 dark:border-slate-700 text-[11px] font-medium hover:bg-slate-100 dark:hover:bg-slate-800"
                       >
                         {t.nav.inventory}
+                      </Link>
+                    )}
+                    {al.entityType === 'maintenance_record' && (
+                      <Link
+                        to="/maintenance"
+                        className="px-2 py-1 rounded border border-slate-300 dark:border-slate-700 text-[11px] font-medium hover:bg-slate-100 dark:hover:bg-slate-800"
+                      >
+                        {t.alerts.openMaintenance}
                       </Link>
                     )}
                     {!al.isRead && (

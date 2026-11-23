@@ -30,9 +30,18 @@
 4. **Prolongation & Retour** :
    - Utilisez **Prolonger le contrat** pour conserver l'historique initial tout en recalculant les jours et le kilométrage.
    - Au retour, effectuez l'**État des lieux de retour**, calculez automatiquement les kilomètres supplémentaires et pénalités de retard éventuelles, puis régularisez la caution (restitution ou déduction justifiée).
-5. **Caisse Journalière & Maintenance** :
+5. **Caisse Journalière & Finances** :
    - Ouvrez et clôturez la session de caisse chaque jour (rapprochement espèces).
-   - Suivez les vidanges et entretiens par kilométrage et par date avec déduction automatique des pièces de rechange en stock.
+   - Encaissez les loyers (Espèces, CCP, BaridiMob, Virement), gérez les cautions séparément et enregistrez les dépenses avec pièces justificatives chiffrées.
+6. **États des lieux & Dommages (`/inspections`)** :
+   - Créez un état des lieux **Départ** avant la remise des clés puis un état des lieux **Retour** à la restitution (schéma interactif du véhicule, photos chiffrées AES-256, signatures numériques, export PDF comparatif).
+   - Une fois validé (`FINALIZED`), le procès-verbal est verrouillé. Les nouveaux dommages n'entraînent jamais de débit automatique : toute déduction passe explicitement par Finance (Cautions / Paiements).
+7. **Maintenance Préventive & Alertes (`/maintenance`)** :
+   - Suivez les vidanges, filtres, freins, pneus et échéanciers personnalisés par véhicule. Cochez l'option de blocage véhicule pour empêcher toute location durant l'intervention, téléversez la facture chiffrée et générez au maximum une dépense Finance.
+   - Consultez les **Alertes opérationnelles** sur le tableau de bord (documents expirant, retards de maintenance, anomalies compteur, ruptures de stock).
+8. **Stock Pièces Détachées & Fournisseurs (`/inventory`)** :
+   - Gérez le catalogue des pièces, seuils minimums, achats (avec création optionnelle d'une dépense Finance *Pièces détachées*), sorties/retours atelier et fournisseurs.
+   - Lorsqu'une maintenance passe à **Clôturée (`COMPLETED`)**, les pièces sélectionnées sont déduites automatiquement du stock (une seule fois, sans double comptage). L'ajustement manuel d'inventaire est réservé à l'Administrateur.
 
 ---
 

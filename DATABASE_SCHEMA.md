@@ -61,27 +61,30 @@
 | `deposit_movements` | Audit trail of deposit receipt, deductions & refunds | `PK(id)`, `FK(deposit_id -> deposits.id RESTRICT)` |
 | `traffic_fines` | Traffic / radar / parking fines linked to rental or vehicle | `PK(id)`, `FK(contract_id)`, `FK(vehicle_id)`, `FK(customer_id)` |
 
-#### Group F — Vehicle Inspections (3 tables)
+#### Group F — Vehicle Inspections & Damage Management (5 tables)
 | Table | Purpose | Key Constraints & Relationships |
 | :--- | :--- | :--- |
-| `vehicle_inspections` | Mandatory `DEPARTURE` and `RETURN` inspections | `PK(id)`, `UNIQUE(inspection_number)`, `UNIQUE(contract_id, stage)`, `CHECK(fuel_level_percent BETWEEN 0 AND 100)` |
-| `inspection_items` | Checklist item condition (`GOOD`, `DAMAGED`, `MISSING`) | `PK(id)`, `FK(inspection_id -> vehicle_inspections.id CASCADE)` |
-| `inspection_photos` | Inspection evidence photos | `PK(id)`, `FK(inspection_id -> vehicle_inspections.id CASCADE)` |
+| `vehicle_inspections` | Mandatory `DEPARTURE` and `RETURN` inspections with lifecycle lock *(extended in Migration 005)* | `PK(id)`, `UNIQUE(inspection_number)`, `UNIQUE(contract_id, stage)`, `status IN ('DRAFT', 'FINALIZED')`, `customer_acknowledged`, `late_return_minutes`, `mileage_delta_km`, `CHECK(fuel_level_percent BETWEEN 0 AND 100)` |
+| `inspection_items` | Checklist item condition (`GOOD`, `DAMAGED`, `MISSING`) *(extended in Migration 005)* | `PK(id)`, `FK(inspection_id -> vehicle_inspections.id CASCADE)`, `category`, `sort_order` |
+| `inspection_photos` | AES-256-GCM encrypted inspection evidence photos *(extended in Migration 005)* | `PK(id)`, `FK(inspection_id -> vehicle_inspections.id CASCADE)`, `FK(damage_id -> vehicle_damages.id SET NULL)`, `original_file_name`, `mime_type` |
+| `vehicle_damages` | Interactive diagram & zone-tagged damage registry *(Migration 005)* | `PK(id)`, `UNIQUE(damage_code)`, `FK(vehicle_id RESTRICT)`, `FK(contract_id RESTRICT)`, `FK(inspection_id RESTRICT)`, `FK(linked_expense_id SET NULL)`, `status IN ('REPORTED','UNDER_REVIEW','CONFIRMED','UNDER_REPAIR','REPAIRED','REJECTED')` |
+| `damage_resolution_records` | Immutable timeline of damage status transitions & repair references *(Migration 005)* | `PK(id)`, `FK(damage_id CASCADE)`, `FK(linked_expense_id SET NULL)`, `FK(recorded_by_user_id RESTRICT)` |
 
-#### Group G — Suppliers, Maintenance & Spare Parts Inventory (6 tables)
+#### Group G — Suppliers, Maintenance & Spare Parts Inventory (7 tables)
 | Table | Purpose | Key Constraints & Relationships |
 | :--- | :--- | :--- |
-| `suppliers` | Garages, parts vendors, insurers | `PK(id)` |
-| `maintenance_types` | Configurable intervals (vidange, filters, tires, brakes, etc.) | `PK(id)`, `UNIQUE(code)`, `default_km_interval`, `default_day_interval` |
-| `maintenance_records` | Completed maintenance work & next due triggers | `PK(id)`, `FK(vehicle_id)`, `FK(maintenance_type_id)`, `FK(supplier_id)` |
-| `inventory_parts` | Spare parts stock & minimum thresholds | `PK(id)`, `UNIQUE(part_code)`, `FK(supplier_id)` |
-| `maintenance_parts` | Parts consumed per maintenance job | `PK(id)`, `FK(maintenance_record_id CASCADE)`, `FK(part_id RESTRICT)` |
-| `inventory_movements` | Immutable stock ledger (`PURCHASE`, `ENTRY`, `WITHDRAWAL`, `MAINTENANCE_USE`, `ADJUSTMENT`) | `PK(id)`, `FK(part_id RESTRICT)`, `FK(maintenance_record_id)`, `CHECK(quantity_delta != 0)` |
+| `suppliers` | Garages, parts vendors, insurers *(extended in Migration 007)* | `PK(id)`, `email`, `wilaya_code`, `is_archived IN (0, 1)` |
+| `maintenance_types` | Configurable intervals (`VIDANGE`, `CABIN_FILTER`, `BRAKES`, etc.) *(seeded in Migration 002 & 006)* | `PK(id)`, `UNIQUE(code)`, `default_km_interval`, `default_day_interval`, `km_warning_threshold`, `day_warning_threshold` |
+| `vehicle_maintenance_schedules` | Per-vehicle preventive interval overrides *(Migration 006)* | `PK(id)`, `UNIQUE(vehicle_id, maintenance_type_id)`, `FK(vehicle_id CASCADE)`, `FK(maintenance_type_id CASCADE)` |
+| `maintenance_records` | Scheduled, active & completed work, blocking, Finance link & encrypted invoice *(extended in Migration 006)* | `PK(id)`, `UNIQUE(record_number)`, `FK(vehicle_id)`, `FK(maintenance_type_id)`, `FK(supplier_id)`, `FK(blocked_period_id SET NULL)`, `status IN ('SCHEDULED','IN_PROGRESS','COMPLETED','CANCELLED')`, `parts_consumed_locked` |
+| `inventory_parts` | Spare parts stock catalog, unit & minimum thresholds *(extended in Migration 007)* | `PK(id)`, `UNIQUE(part_code)`, `FK(supplier_id)`, `unit_label`, `compatible_models`, `is_archived` |
+| `maintenance_parts` | Parts consumed per maintenance intervention | `PK(id)`, `FK(maintenance_record_id CASCADE)`, `FK(part_id RESTRICT)` |
+| `inventory_movements` | Immutable stock ledger (`INITIAL_STOCK`, `PURCHASE`, `ENTRY`, `WITHDRAWAL`, `MAINTENANCE_USE`, `RETURN`, `ADJUSTMENT`) *(recreated in Migration 007)* | `PK(id)`, `FK(part_id RESTRICT)`, `FK(maintenance_record_id RESTRICT)`, `FK(vehicle_id SET NULL)`, `FK(supplier_id SET NULL)`, `FK(expense_id SET NULL)`, `CHECK(quantity_delta != 0)` |
 
 #### Group H — Expenses & Daily Cash Register (3 tables)
 | Table | Purpose | Key Constraints & Relationships |
 | :--- | :--- | :--- |
-| `expenses` | Agency & vehicle operating expenses | `PK(id)`, `UNIQUE(expense_number)`, `FK(vehicle_id)`, `FK(supplier_id)`, `FK(maintenance_record_id)` |
+| `expenses` | Agency & vehicle operating expenses *(indexed in Migration 006 for max 1 `POSTED` expense per maintenance)* | `PK(id)`, `UNIQUE(expense_number)`, `FK(vehicle_id)`, `FK(supplier_id)`, `FK(maintenance_record_id)`, `idx_expenses_unique_posted_maintenance` |
 | `cash_register_sessions` | Daily cash drawer open/close & reconciliation | `PK(id)`, `UNIQUE(session_date)`, `CHECK(status IN ('OPEN', 'CLOSED'))` |
 | `cash_register_movements` | Cash inflows/outflows linked to session & source record | `PK(id)`, `FK(session_id)`, `FK(payment_id)`, `FK(deposit_movement_id)`, `FK(expense_id)` |
 
@@ -90,7 +93,7 @@
 | :--- | :--- | :--- |
 | `invoices` | Bilingual invoices with fiscal compliance flag | `PK(id)`, `UNIQUE(invoice_number)`, `FK(contract_id)`, `FK(customer_id)` |
 | `generated_documents` | Archive of generated A4 PDFs and 58/80mm receipts | `PK(id)`, `UNIQUE(document_number)`, `reprint_count` |
-| `notifications` | Centralized alerts (expiry, overdue, maintenance, low stock, debt) | `PK(id)`, `UNIQUE(dedupe_key)` |
+| `notifications` | Centralized operational alerts (`MAINTENANCE_DUE`, `MAINTENANCE_OVERDUE`, `VEHICLE_DOCUMENT`, `MILEAGE_ANOMALY`, `LOW_STOCK`) | `PK(id)`, `UNIQUE(dedupe_key)` |
 | `audit_logs` | Immutable operational & financial audit trail | `PK(id)`, `FK(user_id SET NULL)` |
 | `application_settings` | Key/value agency, pricing, document, and UI config | `PK(setting_key)` |
 | `backup_records` | History & SHA-256 checksums of local backups | `PK(id)`, `CHECK(backup_type IN ('AUTO', 'MANUAL', 'PRE_RESTORE'))` |
@@ -108,5 +111,7 @@
 - `idx_contracts_vehicle_dates` (`rental_contracts(vehicle_id, status, start_date, expected_return_date)`)
 - `idx_contracts_customer` (`rental_contracts(customer_id, status)`)
 - `idx_payments_contract`, `idx_payments_customer`, `idx_deposits_status`
-- `idx_inspections_contract`, `idx_maintenance_vehicle_date`, `idx_inventory_movements_part`
-- `idx_expenses_date_vehicle`, `idx_cash_movements_session`, `idx_notifications_state`, `idx_audit_logs_entity`
+- `idx_inspections_vehicle`, `idx_inspections_contract`, `idx_damages_vehicle`, `idx_damages_inspection`, `idx_inspection_photos_insp`
+- `idx_maintenance_record_number`, `idx_maintenance_status`, `idx_maintenance_vehicle_date`, `idx_vehicle_maint_schedules_vehicle`, `idx_expenses_unique_posted_maintenance`
+- `idx_inventory_parts_stock`, `idx_inventory_movements_part`, `idx_inventory_movements_maintenance`, `idx_suppliers_archived`
+- `idx_expenses_date_vehicle`, `idx_cash_movements_session`, `idx_notifications_state`, `idx_notifications_entity`, `idx_audit_logs_entity`

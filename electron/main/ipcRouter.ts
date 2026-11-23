@@ -1206,7 +1206,14 @@ export function createIpcHandlers(
 
     [IPC_CHANNELS.NOTIFICATIONS_RESOLVE]: wrap((env) => {
       const session = requireAuthenticatedSession(db, sessionStore, env.token);
-      requireAnyPermission(session.userId, ['maintenance:update', 'maintenance:complete', 'maintenance:write', 'vehicles:write']);
+      requireAnyPermission(session.userId, [
+        'maintenance:update',
+        'maintenance:complete',
+        'maintenance:write',
+        'vehicles:write',
+        'inventory:manage_parts',
+        'inventory:adjust_stock',
+      ]);
       return resolveAlert(
         db,
         { id: session.userId, username: session.username },

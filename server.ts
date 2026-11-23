@@ -1910,6 +1910,8 @@ export function createPreviewExpressApp(customDbPath?: string) {
         'maintenance:complete',
         'maintenance:write',
         'vehicles:write',
+        'inventory:manage_parts',
+        'inventory:adjust_stock',
       ]);
       res.json({
         ok: true,
