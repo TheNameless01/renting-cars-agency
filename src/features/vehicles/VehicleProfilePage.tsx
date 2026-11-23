@@ -19,6 +19,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { fromMinorUnits, toMinorUnits } from '../../../shared/constants/algeria.ts';
 import { getDiagramZoneLabel } from '../../../shared/constants/inspections.ts';
 import type {
+  GeneratedDocument,
   MaintenanceStatus,
   VehicleDocType,
   VehicleDocument,
@@ -27,6 +28,7 @@ import type {
   VehicleTransmission,
 } from '../../../shared/types/domain.ts';
 import { ConfirmDialog } from '../../components/ConfirmDialog.tsx';
+import { DocumentPreviewModal } from '../../components/DocumentPreviewModal.tsx';
 import { ModalDialog } from '../../components/ModalDialog.tsx';
 import { useToast } from '../../components/Toast.tsx';
 import { useAuth } from '../../hooks/useAuth.tsx';
@@ -99,6 +101,10 @@ export function VehicleProfilePage() {
   const [scheduleModalItem, setScheduleModalItem] = useState<VehicleMaintenanceDueItemDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<VehicleTab>('general');
+  const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [docPreviewOpen, setDocPreviewOpen] = useState(false);
+  const [generatedDoc, setGeneratedDoc] = useState<GeneratedDocument | null>(null);
+  const [generatedPdfBase64, setGeneratedPdfBase64] = useState<string | null>(null);
   // ...
   const canViewVehicleFinance =
     hasPermission('finance:read') ||
@@ -126,6 +132,7 @@ export function VehicleProfilePage() {
     hasPermission('maintenance:manage_types') ||
     hasPermission('maintenance:update') ||
     hasPermission('maintenance:write');
+  const canGenerateDoc = hasPermission('documents:generate');
 
   // Edit vehicle modal
   const [showEditModal, setShowEditModal] = useState(false);
@@ -469,6 +476,27 @@ export function VehicleProfilePage() {
     }
   };
 
+  const handleGenerateVehicleHistoryPdf = async () => {
+    if (!profile) return;
+    setGeneratingPdf(true);
+    try {
+      const res = await erpClient.generateDocument({
+        documentKind: 'VEHICLE_HISTORY',
+        vehicleId: profile.vehicle.id,
+        format: 'A4_PDF',
+        language: lang,
+        numeralSystem: numerals,
+      });
+      setGeneratedDoc(res.document);
+      setGeneratedPdfBase64(res.pdfBase64);
+      setDocPreviewOpen(true);
+    } catch (err) {
+      showError(err instanceof Error ? err.message : t.common.error);
+    } finally {
+      setGeneratingPdf(false);
+    }
+  };
+
   if (loading || !profile) {
     return (
       <div className="py-12 text-center text-sm text-slate-500 dark:text-slate-400">
@@ -514,26 +542,39 @@ export function VehicleProfilePage() {
             </p>
           </div>
         </div>
-        {canWrite && !vehicle.isArchived && (
-          <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {canGenerateDoc && (
             <button
               type="button"
-              onClick={openEditModal}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap"
+              disabled={generatingPdf}
+              onClick={() => void handleGenerateVehicleHistoryPdf()}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap shrink-0"
             >
-              <Pencil className="w-3.5 h-3.5" />
-              <span>{t.vehicles.editVehicle}</span>
+              <FileText className="w-3.5 h-3.5 text-blue-700 dark:text-blue-400" />
+              <span>{t.documents.triggers.vehicleHistoryPdf}</span>
             </button>
-            <button
-              type="button"
-              onClick={() => setConfirmArchive(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-400 text-xs font-medium hover:bg-rose-50 dark:hover:bg-rose-950/30 whitespace-nowrap"
-            >
-              <Archive className="w-3.5 h-3.5" />
-              <span>{t.vehicles.archiveVehicle}</span>
-            </button>
-          </div>
-        )}
+          )}
+          {canWrite && !vehicle.isArchived && (
+            <>
+              <button
+                type="button"
+                onClick={openEditModal}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+                <span>{t.vehicles.editVehicle}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmArchive(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-400 text-xs font-medium hover:bg-rose-50 dark:hover:bg-rose-950/30 whitespace-nowrap"
+              >
+                <Archive className="w-3.5 h-3.5" />
+                <span>{t.vehicles.archiveVehicle}</span>
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* 8 Tabs */}
@@ -1851,6 +1892,13 @@ export function VehicleProfilePage() {
           onSaved={() => void loadProfile()}
         />
       )}
+
+      <DocumentPreviewModal
+        open={docPreviewOpen}
+        onClose={() => setDocPreviewOpen(false)}
+        initialDocument={generatedDoc}
+        initialPdfBase64={generatedPdfBase64}
+      />
     </div>
   );
 }

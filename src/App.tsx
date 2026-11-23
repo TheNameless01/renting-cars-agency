@@ -9,12 +9,14 @@ import { ContractsPage } from './features/contracts/ContractsPage.tsx';
 import { NewContractWizardPage } from './features/contracts/NewContractWizardPage.tsx';
 import { CustomerProfilePage } from './features/customers/CustomerProfilePage.tsx';
 import { CustomersPage } from './features/customers/CustomersPage.tsx';
+import { DocumentsPage } from './features/documents/DocumentsPage.tsx';
 import { FinancePage } from './features/finance/FinancePage.tsx';
 import { Phase1HomePage } from './features/home/Phase1HomePage.tsx';
 import { InspectionsPage } from './features/inspections/InspectionsPage.tsx';
 import { InventoryPage } from './features/inventory/InventoryPage.tsx';
 import { MaintenancePage } from './features/maintenance/MaintenancePage.tsx';
 import { PlanningPage } from './features/planning/PlanningPage.tsx';
+import { ReportsPage } from './features/reports/ReportsPage.tsx';
 import { SettingsPage } from './features/settings/SettingsPage.tsx';
 import { UsersPage } from './features/users/UsersPage.tsx';
 import { VehicleProfilePage } from './features/vehicles/VehicleProfilePage.tsx';
@@ -79,7 +81,8 @@ function AppContent() {
           <Route path="/maintenance" element={<MaintenancePage />} />
           <Route path="/inventory" element={<InventoryPage />} />
           <Route path="/finance" element={<FinancePage />} />
-          <Route path="/reports" element={<FinancePage key="reports" defaultTab="reports" />} />
+          <Route path="/documents" element={<DocumentsPage />} />
+          <Route path="/reports" element={<ReportsPage />} />
           <Route path="/users" element={<UsersPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

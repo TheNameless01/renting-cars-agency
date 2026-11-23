@@ -43,7 +43,11 @@ export type PermissionCode =
   | 'inventory:adjust_stock'
   | 'inventory:override_negative'
   | 'documents:generate'
+  | 'documents:view'
+  | 'documents:reprint'
+  | 'documents:manage_templates'
   | 'reports:view'
+  | 'reports:export'
   | 'audit:view'
   | 'backups:manage'
   | 'backups:restore';
@@ -188,6 +192,16 @@ export interface CustomerDocument {
   encryptedFilePath: string;
   originalFileName: string;
   mimeType: string;
+  documentNumber: string | null;
+  issueDate: string | null;
+  expirationDate: string | null;
+  reminderDays: number;
+  notes: string | null;
+  isArchived: boolean;
+  replacesDocId: number | null;
+  replacedByDocId: number | null;
+  archivedAt: string | null;
+  archivedByUserId: number | null;
   uploadedByUserId: number;
   createdAt: string;
 }
@@ -689,38 +703,173 @@ export interface Invoice {
   customerId: number;
   issueDate: string;
   subtotalMinor: number;
+  discountMinor?: number;
   taxMinor: number;
+  taxRatePercent?: number;
   totalMinor: number;
+  currency?: CurrencyCode;
   isFiscallyCompliant: boolean;
   pdfFilePath: string | null;
+  notes?: string | null;
   createdByUserId: number;
   createdAt: string;
 }
 
 export type DocumentKind =
   | 'RENTAL_CONTRACT'
+  | 'CONTRACT_AMENDMENT'
   | 'DEPARTURE_INSPECTION'
   | 'RETURN_INSPECTION'
-  | 'INVOICE'
+  | 'DAMAGE_REPORT'
   | 'PAYMENT_RECEIPT'
-  | 'DEPOSIT_RECEIPT';
+  | 'DEPOSIT_RECEIPT'
+  | 'DEPOSIT_SETTLEMENT'
+  | 'INVOICE'
+  | 'EXPENSE_RECEIPT'
+  | 'MAINTENANCE_REPORT'
+  | 'VEHICLE_HISTORY'
+  | 'CUSTOMER_STATEMENT'
+  | 'CASH_REGISTER_CLOSING'
+  | 'FINANCIAL_SUMMARY'
+  | 'CUSTOM_REPORT';
 
-export type DocumentFormat = 'A4_PDF' | 'THERMAL_58MM' | 'THERMAL_80MM';
+export type DocumentFormat = 'A4_PDF' | 'A4_LANDSCAPE_PDF' | 'THERMAL_80MM' | 'THERMAL_58MM';
 
 export interface GeneratedDocument {
   id: number;
   documentNumber: string;
   documentKind: DocumentKind;
   format: DocumentFormat;
+  title: string;
+  language: AppLanguage;
+  numeralSystem: NumeralSystem;
   contractId: number | null;
   paymentId: number | null;
   depositId: number | null;
   inspectionId: number | null;
   invoiceId: number | null;
-  filePath: string;
+  customerId: number | null;
+  vehicleId: number | null;
+  maintenanceRecordId: number | null;
+  expenseId: number | null;
+  cashSessionId: number | null;
+  isCopy: boolean;
+  sourceDocumentId: number | null;
+  sourceDocumentNumber?: string | null;
   reprintCount: number;
+  templateVersion: number;
+  generationStatus: 'READY' | 'FAILED';
+  filePath: string;
+  originalFileName: string;
+  mimeType: string;
+  fileSizeBytes: number;
+  sha256Hash: string | null;
   generatedByUserId: number;
+  generatedByUsername: string;
+  lastPrintedAt: string | null;
+  lastPrintedByUserId: number | null;
+  customerName?: string | null;
+  vehicleLabel?: string | null;
+  contractNumber?: string | null;
   createdAt: string;
+}
+
+export interface DocumentTemplateConfig {
+  agencyName: string;
+  agencyAddress: string;
+  agencyPhone: string;
+  agencyEmail: string;
+  agencyWilayaCode: string;
+  rcNumber: string;
+  nifNumber: string;
+  nisNumber: string;
+  artNumber: string;
+  logoVaultPath: string;
+  logoMimeType: string;
+  defaultLanguage: AppLanguage;
+  defaultFormat: DocumentFormat;
+  thermalWidth: '80MM' | '58MM';
+  defaultPrinterA4: string;
+  defaultPrinterThermal: string;
+  showLogo: boolean;
+  showFiscalIds: boolean;
+  showSignatureBoxes: boolean;
+  invoiceFiscallyCompliant: boolean;
+  invoiceTaxRatePercent: number;
+  templateVersion: number;
+  footerFr: string;
+  footerAr: string;
+  signatureAgencyFr: string;
+  signatureAgencyAr: string;
+  signatureCustomerFr: string;
+  signatureCustomerAr: string;
+  contractTermsFr: string;
+  contractTermsAr: string;
+  invoiceDisclaimerFr: string;
+  invoiceDisclaimerAr: string;
+  prefixes: Record<DocumentKind, string>;
+}
+
+export interface SystemPrinterInfo {
+  name: string;
+  displayName: string;
+  description: string;
+  status: number;
+  isDefault: boolean;
+}
+
+export type ReportCategory = 'FINANCIAL' | 'FLEET' | 'OPERATIONAL' | 'CUSTOM';
+export type ReportExportFormat = 'CSV' | 'XLSX' | 'PDF';
+
+export interface ReportFilter {
+  category: ReportCategory;
+  reportCode?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  customerId?: number | null;
+  vehicleId?: number | null;
+  documentKind?: DocumentKind | null;
+  transactionType?: string | null;
+  userId?: number | null;
+  status?: string | null;
+  expenseCategory?: string | null;
+  includeSections?: string[];
+  language?: AppLanguage;
+}
+
+export interface ReportDataset {
+  category: ReportCategory;
+  reportCode: string;
+  titleFr: string;
+  titleAr: string;
+  generatedAt: string;
+  appliedFilters: ReportFilter;
+  accountingDisclosuresFr: string[];
+  accountingDisclosuresAr: string[];
+  kpis: Array<{
+    key: string;
+    labelFr: string;
+    labelAr: string;
+    valueDisplay: string;
+    numericValue: number;
+    unit?: string;
+    tone?: 'neutral' | 'positive' | 'warning' | 'danger';
+    noteFr?: string;
+    noteAr?: string;
+  }>;
+  sections: Array<{
+    id: string;
+    titleFr: string;
+    titleAr: string;
+    columns: Array<{
+      key: string;
+      labelFr: string;
+      labelAr: string;
+      type: 'text' | 'number' | 'currency_minor' | 'date' | 'percent';
+    }>;
+    rows: Array<Record<string, string | number | boolean | null>>;
+    totalsRow?: Record<string, string | number | null>;
+  }>;
 }
 
 export type NotificationSeverity = 'INFO' | 'WARNING' | 'CRITICAL';

@@ -15,7 +15,11 @@ function getDefaultDateRange(): { dateFrom: string; dateTo: string } {
 }
 
 function escapeCsvCell(val: string | number | null | undefined): string {
-  const s = val == null ? '' : String(val);
+  if (typeof val === 'number' && Number.isFinite(val)) return String(val);
+  let s = val == null ? '' : String(val);
+  if (/^[\t\r ]*[=+\-@]/.test(s) || s.startsWith('\t') || s.startsWith('\r')) {
+    s = `'${s}`;
+  }
   if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
     return `"${s.replace(/"/g, '""')}"`;
   }

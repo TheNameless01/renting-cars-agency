@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ClipboardCheck,
   FileDown,
+  FileText,
   Play,
   Plus,
   Receipt,
@@ -18,11 +19,14 @@ import { Link, useParams } from 'react-router-dom';
 import { fromMinorUnits, toMinorUnits } from '../../../shared/constants/algeria.ts';
 import { getDiagramZoneLabel } from '../../../shared/constants/inspections.ts';
 import type {
+  DocumentKind,
+  GeneratedDocument,
   InspectionStage,
   PaymentDirection,
   PaymentMethod,
 } from '../../../shared/types/domain.ts';
 import { ConfirmDialog } from '../../components/ConfirmDialog.tsx';
+import { DocumentPreviewModal } from '../../components/DocumentPreviewModal.tsx';
 import { ModalDialog } from '../../components/ModalDialog.tsx';
 import { useToast } from '../../components/Toast.tsx';
 import { useAuth } from '../../hooks/useAuth.tsx';
@@ -124,6 +128,12 @@ export function ContractDetailPage() {
   const [selectedDamage, setSelectedDamage] = useState<VehicleDamageListItemDto | null>(null);
   const [exportingPdf, setExportingPdf] = useState(false);
 
+  // Phase 5: Archived PDF Generation & Preview
+  const [generatingDoc, setGeneratingDoc] = useState(false);
+  const [docPreviewOpen, setDocPreviewOpen] = useState(false);
+  const [generatedDoc, setGeneratedDoc] = useState<GeneratedDocument | null>(null);
+  const [generatedPdfBase64, setGeneratedPdfBase64] = useState<string | null>(null);
+
   const canWrite = hasPermission('contracts:write');
   const canExtend = hasPermission('contracts:extend');
   const canCancel = hasPermission('contracts:cancel');
@@ -134,6 +144,7 @@ export function ContractDetailPage() {
     hasPermission('inspections:create') || hasPermission('inspections:write');
   const canViewInspections =
     hasPermission('inspections:view') || canCreateInspection || hasPermission('contracts:read');
+  const canGenerateDoc = hasPermission('documents:generate');
 
   const loadDetail = useCallback(async () => {
     if (!id) return;
@@ -390,6 +401,32 @@ export function ContractDetailPage() {
     }
   };
 
+  const handleGenerateContractDoc = async (
+    documentKind: DocumentKind,
+    opts?: { inspectionId?: number; depositId?: number }
+  ) => {
+    if (!detail || !canGenerateDoc) return;
+    setGeneratingDoc(true);
+    try {
+      const res = await erpClient.generateDocument({
+        documentKind,
+        format: 'A4_PDF',
+        language: lang,
+        numeralSystem: numerals,
+        contractId: detail.contract.id,
+        inspectionId: opts?.inspectionId ?? null,
+        depositId: opts?.depositId ?? null,
+      });
+      setGeneratedDoc(res.document);
+      setGeneratedPdfBase64(res.pdfBase64);
+      setDocPreviewOpen(true);
+    } catch (err) {
+      showError(err instanceof Error ? err.message : t.common.error);
+    } finally {
+      setGeneratingDoc(false);
+    }
+  };
+
   if (loading || !detail) {
     return (
       <div className="py-12 text-center text-sm text-slate-500">{t.common.loading}</div>
@@ -436,6 +473,39 @@ export function ContractDetailPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {canGenerateDoc && (
+            <>
+              <button
+                type="button"
+                disabled={generatingDoc}
+                onClick={() => void handleGenerateContractDoc('RENTAL_CONTRACT')}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap shrink-0"
+              >
+                <FileText className="w-3.5 h-3.5 text-blue-700 dark:text-blue-400" />
+                <span>{t.documents.triggers.contractPdf}</span>
+              </button>
+              {extensions.length > 0 && (
+                <button
+                  type="button"
+                  disabled={generatingDoc}
+                  onClick={() => void handleGenerateContractDoc('CONTRACT_AMENDMENT')}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap shrink-0"
+                >
+                  <FileText className="w-3.5 h-3.5 text-indigo-700 dark:text-indigo-400" />
+                  <span>{t.documents.triggers.amendmentPdf}</span>
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={generatingDoc}
+                onClick={() => void handleGenerateContractDoc('INVOICE')}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap shrink-0"
+              >
+                <Receipt className="w-3.5 h-3.5 text-emerald-700 dark:text-emerald-400" />
+                <span>{t.documents.triggers.invoicePdf}</span>
+              </button>
+            </>
+          )}
           {canWrite && (c.status === 'DRAFT' || c.status === 'CONFIRMED') && (
             <button
               type="button"
@@ -698,6 +768,38 @@ export function ContractDetailPage() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {deposit && canGenerateDoc && (
+                <>
+                  <button
+                    type="button"
+                    disabled={generatingDoc}
+                    onClick={() =>
+                      void handleGenerateContractDoc('DEPOSIT_RECEIPT', { depositId: deposit.id })
+                    }
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap shrink-0"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-blue-700 dark:text-blue-400" />
+                    <span>{t.documents.triggers.depositReceiptPdf}</span>
+                  </button>
+                  {(deposit.deductedAmountMinor > 0 ||
+                    deposit.refundedAmountMinor > 0 ||
+                    deposit.status !== 'HELD') && (
+                    <button
+                      type="button"
+                      disabled={generatingDoc}
+                      onClick={() =>
+                        void handleGenerateContractDoc('DEPOSIT_SETTLEMENT', {
+                          depositId: deposit.id,
+                        })
+                      }
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap shrink-0"
+                    >
+                      <FileText className="w-3.5 h-3.5 text-emerald-700 dark:text-emerald-400" />
+                      <span>{t.documents.triggers.depositSettlementPdf}</span>
+                    </button>
+                  )}
+                </>
+              )}
               {deposit && (
                 <button
                   type="button"
@@ -920,6 +1022,21 @@ export function ContractDetailPage() {
                       <FileDown className="w-3.5 h-3.5" />
                       <span>{t.inspections.exportPdfBtn}</span>
                     </button>
+                    {canGenerateDoc && (
+                      <button
+                        type="button"
+                        disabled={generatingDoc}
+                        onClick={() =>
+                          void handleGenerateContractDoc('DEPARTURE_INSPECTION', {
+                            inspectionId: contractInspections.departure!.inspection.id,
+                          })
+                        }
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-blue-300 dark:border-blue-800 text-blue-800 dark:text-blue-300 text-xs font-medium hover:bg-blue-50 dark:hover:bg-blue-950/30 disabled:opacity-50 whitespace-nowrap shrink-0"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        <span>{t.documents.triggers.inspectionPdf}</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               ) : (
@@ -1036,6 +1153,21 @@ export function ContractDetailPage() {
                       <FileDown className="w-3.5 h-3.5" />
                       <span>{t.inspections.exportPdfBtn}</span>
                     </button>
+                    {canGenerateDoc && (
+                      <button
+                        type="button"
+                        disabled={generatingDoc}
+                        onClick={() =>
+                          void handleGenerateContractDoc('RETURN_INSPECTION', {
+                            inspectionId: contractInspections.returnInspection!.inspection.id,
+                          })
+                        }
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-blue-300 dark:border-blue-800 text-blue-800 dark:text-blue-300 text-xs font-medium hover:bg-blue-50 dark:hover:bg-blue-950/30 disabled:opacity-50 whitespace-nowrap shrink-0"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        <span>{t.documents.triggers.inspectionPdf}</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               ) : (
@@ -1066,27 +1198,40 @@ export function ContractDetailPage() {
                   {t.inspections.comparisonTitle}
                 </h3>
                 {contractInspections.returnInspection && (
-                  <button
-                    type="button"
-                    disabled={exportingPdf}
-                    onClick={async () => {
-                      setExportingPdf(true);
-                      try {
-                        const payload = await erpClient.getInspectionPdfPayload(
-                          contractInspections.returnInspection!.inspection.id
-                        );
-                        await exportDamageComparisonPdf(payload, lang, numerals);
-                      } catch (err) {
-                        showError(err instanceof Error ? err.message : t.common.error);
-                      } finally {
-                        setExportingPdf(false);
-                      }
-                    }}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800"
-                  >
-                    <FileDown className="w-3.5 h-3.5" />
-                    <span>{t.inspections.exportComparisonPdfBtn}</span>
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={exportingPdf}
+                      onClick={async () => {
+                        setExportingPdf(true);
+                        try {
+                          const payload = await erpClient.getInspectionPdfPayload(
+                            contractInspections.returnInspection!.inspection.id
+                          );
+                          await exportDamageComparisonPdf(payload, lang, numerals);
+                        } catch (err) {
+                          showError(err instanceof Error ? err.message : t.common.error);
+                        } finally {
+                          setExportingPdf(false);
+                        }
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800"
+                    >
+                      <FileDown className="w-3.5 h-3.5" />
+                      <span>{t.inspections.exportComparisonPdfBtn}</span>
+                    </button>
+                    {canGenerateDoc && (
+                      <button
+                        type="button"
+                        disabled={generatingDoc}
+                        onClick={() => void handleGenerateContractDoc('DAMAGE_REPORT')}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-300 dark:border-blue-800 text-blue-800 dark:text-blue-300 text-xs font-medium hover:bg-blue-50 dark:hover:bg-blue-950/30 disabled:opacity-50 whitespace-nowrap shrink-0"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        <span>{t.documents.triggers.damageReportPdf}</span>
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -1676,6 +1821,13 @@ export function ContractDetailPage() {
         damage={selectedDamage}
         onClose={() => setSelectedDamage(null)}
         onUpdated={() => void loadDetail()}
+      />
+
+      <DocumentPreviewModal
+        open={docPreviewOpen}
+        onClose={() => setDocPreviewOpen(false)}
+        initialDocument={generatedDoc}
+        initialPdfBase64={generatedPdfBase64}
       />
     </div>
   );

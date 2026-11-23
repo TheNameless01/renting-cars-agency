@@ -48,6 +48,7 @@ import {
 import {
   addCustomerRiskRecord,
   archiveCustomer,
+  archiveCustomerDocument,
   checkCustomerEligibility,
   createCustomer,
   getCustomerProfile,
@@ -55,8 +56,26 @@ import {
   readCustomerDocument,
   resolveCustomerRiskRecord,
   updateCustomer,
+  updateCustomerDocumentMeta,
   uploadCustomerDocument,
 } from './electron/database/services/customerService.ts';
+import {
+  generateAndArchiveDocument,
+  getDocumentById,
+  getDocumentTemplateConfig,
+  listDocuments,
+  readAgencyLogo,
+  readArchivedDocumentPdf,
+  recordDocumentPrintEvent,
+  reprintArchivedDocument,
+  updateDocumentTemplateConfig,
+  uploadAgencyLogo,
+} from './electron/database/services/documentService.ts';
+import {
+  buildReportCsv,
+  buildReportXlsx,
+  generateReportDataset,
+} from './electron/database/services/reportService.ts';
 import {
   createTrafficFine,
   getDepositDetail,
@@ -154,6 +173,7 @@ import { PREVIEW_ENDPOINTS } from './shared/api/previewContracts.ts';
 import {
   AdjustInventoryStockSchema,
   AddVehicleDamageSchema,
+  ArchiveCustomerDocSchema,
   BootstrapAdminSchema,
   CalculatePriceSchema,
   ChangePasswordSchema,
@@ -173,25 +193,33 @@ import {
   CreateTrafficFineSchema,
   CreateUserSchema,
   CreateVehicleSchema,
+  ExportReportSchema,
   ExtendContractSchema,
+  GenerateDocumentSchema,
+  ListDocumentsSchema,
   LoginSchema,
   OpenCashSessionSchema,
   RecordCashAdjustmentSchema,
   RecordInventoryMovementSchema,
   RecordPaymentSchema,
+  ReportFilterSchema,
+  ReprintDocumentSchema,
   ResolveRiskRecordSchema,
   ReverseExpenseSchema,
   ReversePaymentSchema,
   SettleDepositSchema,
   UnlockSessionSchema,
+  UpdateCustomerDocMetaSchema,
   UpdateCustomerSchema,
   UpdateDamageStatusSchema,
+  UpdateDocumentTemplatesSchema,
   UpdateInspectionDraftSchema,
   UpdateMaintenanceRecordSchema,
   UpdateReservationStatusSchema,
   UpdateSettingsBatchSchema,
   UpdateUserSchema,
   UpdateVehicleSchema,
+  UploadAgencyLogoSchema,
   UploadCustomerDocSchema,
   UploadInspectionPhotoSchema,
   UpsertCustomerCustomRateSchema,
@@ -718,6 +746,35 @@ export function createPreviewExpressApp(customDbPath?: string) {
       requirePermission(db, session, 'customers:read');
       const doc = readCustomerDocument(db, previewVaultDir, previewVaultKey, Number(req.params.docId));
       res.json({ ok: true, data: doc });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.patch(`${PREVIEW_ENDPOINTS.CUSTOMERS}/documents/:docId`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'customers:write');
+      const parsed = UpdateCustomerDocMetaSchema.parse({ ...req.body, docId: Number(req.params.docId) });
+      const updated = updateCustomerDocumentMeta(db, { id: session.userId, username: session.username }, parsed);
+      res.json({ ok: true, data: updated });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.CUSTOMERS}/documents/:docId/archive`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'customers:write');
+      const parsed = ArchiveCustomerDocSchema.parse({ ...req.body, docId: Number(req.params.docId) });
+      const updated = archiveCustomerDocument(
+        db,
+        { id: session.userId, username: session.username },
+        parsed.docId,
+        parsed.reason
+      );
+      res.json({ ok: true, data: updated });
     } catch (err) {
       handleError(res, err);
     }
@@ -2087,6 +2144,259 @@ export function createPreviewExpressApp(customDbPath?: string) {
           Number(req.params.id),
           archived
         ),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  // ============================================================================
+  // Phase 5: Documents, PDF Generation, Templates, Printing & Reports
+  // ============================================================================
+  app.get(`${PREVIEW_ENDPOINTS.DOCUMENTS}/templates`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, [
+        'documents:view',
+        'documents:generate',
+        'documents:manage_templates',
+        'settings:manage',
+      ]);
+      res.json({ ok: true, data: getDocumentTemplateConfig(db) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.put(`${PREVIEW_ENDPOINTS.DOCUMENTS}/templates`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['documents:manage_templates', 'settings:manage']);
+      const parsed = UpdateDocumentTemplatesSchema.parse(req.body);
+      res.json({
+        ok: true,
+        data: updateDocumentTemplateConfig(db, { id: session.userId, username: session.username }, parsed as any),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.DOCUMENTS}/logo`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, [
+        'documents:view',
+        'documents:generate',
+        'documents:manage_templates',
+        'settings:manage',
+      ]);
+      res.json({ ok: true, data: readAgencyLogo(db, previewVaultDir, previewVaultKey) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.DOCUMENTS}/logo`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['documents:manage_templates', 'settings:manage']);
+      const parsed = UploadAgencyLogoSchema.parse(req.body);
+      res.status(201).json({
+        ok: true,
+        data: uploadAgencyLogo(
+          db,
+          { id: session.userId, username: session.username },
+          previewVaultDir,
+          previewVaultKey,
+          parsed
+        ),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.DOCUMENTS}/printers`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['documents:view', 'documents:generate', 'documents:manage_templates']);
+      res.json({ ok: true, data: [] });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(PREVIEW_ENDPOINTS.DOCUMENTS, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['documents:view', 'documents:generate']);
+      const parsed = ListDocumentsSchema.parse({
+        search: typeof req.query.search === 'string' && req.query.search ? req.query.search : undefined,
+        documentKind: typeof req.query.documentKind === 'string' && req.query.documentKind ? req.query.documentKind : undefined,
+        format: typeof req.query.format === 'string' && req.query.format ? req.query.format : undefined,
+        customerId: req.query.customerId ? Number(req.query.customerId) : undefined,
+        vehicleId: req.query.vehicleId ? Number(req.query.vehicleId) : undefined,
+        contractId: req.query.contractId ? Number(req.query.contractId) : undefined,
+        dateFrom: typeof req.query.dateFrom === 'string' && req.query.dateFrom ? req.query.dateFrom : undefined,
+        dateTo: typeof req.query.dateTo === 'string' && req.query.dateTo ? req.query.dateTo : undefined,
+        isCopy: req.query.isCopy === 'true' ? true : req.query.isCopy === 'false' ? false : undefined,
+        limit: req.query.limit ? Number(req.query.limit) : undefined,
+      });
+      res.json({ ok: true, data: listDocuments(db, parsed) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.DOCUMENTS}/generate`, async (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'documents:generate');
+      const parsed = GenerateDocumentSchema.parse(req.body);
+      const generated = await generateAndArchiveDocument(
+        db,
+        { id: session.userId, username: session.username },
+        previewVaultDir,
+        previewVaultKey,
+        parsed as any
+      );
+      res.status(201).json({ ok: true, data: generated });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.DOCUMENTS}/:id/reprint`, async (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['documents:reprint', 'documents:generate']);
+      const parsed = ReprintDocumentSchema.parse({ ...req.body, sourceDocumentId: Number(req.params.id) });
+      const copy = await reprintArchivedDocument(
+        db,
+        { id: session.userId, username: session.username },
+        previewVaultDir,
+        previewVaultKey,
+        parsed
+      );
+      res.status(201).json({ ok: true, data: copy });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.DOCUMENTS}/:id/printed`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['documents:view', 'documents:reprint', 'documents:generate']);
+      const doc = recordDocumentPrintEvent(
+        db,
+        { id: session.userId, username: session.username },
+        Number(req.params.id),
+        {
+          printerName: typeof req.body?.printerName === 'string' ? req.body.printerName : 'browser-print',
+          copies: req.body?.copies ? Number(req.body.copies) : 1,
+          silent: Boolean(req.body?.silent),
+        }
+      );
+      res.json({ ok: true, data: { printed: true, printerName: 'browser-print', copies: 1, document: doc } });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.DOCUMENTS}/:id/read`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['documents:view', 'documents:generate']);
+      res.json({
+        ok: true,
+        data: readArchivedDocumentPdf(db, previewVaultDir, previewVaultKey, Number(req.params.id)),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(`${PREVIEW_ENDPOINTS.DOCUMENTS}/:id`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['documents:view', 'documents:generate']);
+      res.json({ ok: true, data: getDocumentById(db, Number(req.params.id)) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.REPORTS}/generate`, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requireAnyPermission(session.userId, ['reports:view', 'reports:export']);
+      const parsed = ReportFilterSchema.parse(req.body);
+      res.json({ ok: true, data: generateReportDataset(db, parsed) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(`${PREVIEW_ENDPOINTS.REPORTS}/export`, async (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'reports:export');
+      const parsed = ExportReportSchema.parse(req.body);
+      const dataset = generateReportDataset(db, { ...parsed.filter, language: parsed.language });
+
+      if (parsed.exportFormat === 'CSV') {
+        const csv = buildReportCsv(dataset, parsed.language);
+        return res.json({
+          ok: true,
+          data: {
+            exportFormat: 'CSV',
+            fileName: `${dataset.reportCode}_${parsed.language}.csv`,
+            mimeType: 'text/csv;charset=utf-8',
+            base64Data: Buffer.from(csv, 'utf8').toString('base64'),
+          },
+        });
+      }
+      if (parsed.exportFormat === 'XLSX') {
+        const buf = await buildReportXlsx(dataset, parsed.language);
+        return res.json({
+          ok: true,
+          data: {
+            exportFormat: 'XLSX',
+            fileName: `${dataset.reportCode}_${parsed.language}.xlsx`,
+            mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            base64Data: buf.toString('base64'),
+          },
+        });
+      }
+      const docKind = parsed.filter.category === 'FINANCIAL' ? 'FINANCIAL_SUMMARY' : 'CUSTOM_REPORT';
+      const generated = await generateAndArchiveDocument(
+        db,
+        { id: session.userId, username: session.username },
+        previewVaultDir,
+        previewVaultKey,
+        {
+          documentKind: docKind,
+          format: parsed.pdfFormat ?? 'A4_PDF',
+          language: parsed.language,
+          numeralSystem: parsed.numeralSystem,
+          dateFrom: parsed.filter.dateFrom ?? null,
+          dateTo: parsed.filter.dateTo ?? null,
+          customerId: parsed.filter.customerId ?? null,
+          vehicleId: parsed.filter.vehicleId ?? null,
+          reportFilter: parsed.filter,
+        }
+      );
+      res.json({
+        ok: true,
+        data: {
+          exportFormat: 'PDF',
+          fileName: generated.document.originalFileName,
+          mimeType: 'application/pdf',
+          base64Data: generated.pdfBase64,
+          document: generated.document,
+        },
       });
     } catch (err) {
       handleError(res, err);

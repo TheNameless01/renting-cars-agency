@@ -302,6 +302,7 @@ const SYNC_MANAGED_CATEGORIES = [
   'MAINTENANCE_DUE',
   'MAINTENANCE_OVERDUE',
   'VEHICLE_DOCUMENT',
+  'CUSTOMER_DOCUMENT',
   'MILEAGE_ANOMALY',
   'LOW_STOCK',
 ];
@@ -539,6 +540,107 @@ export function syncOperationalAlerts(db: Database.Database, referenceDate?: str
       entityType: 'inventory_part',
       entityId: Number(part.id),
       dueDate: today,
+    });
+  }
+
+  // 6. Customer documents & driving licences expiring / expired
+  const customerDocs = db
+    .prepare<[], any>(
+      `SELECT cd.id, cd.customer_id, cd.doc_category, cd.original_file_name,
+              cd.expiration_date, cd.reminder_days, c.full_name, c.phone
+       FROM customer_documents cd
+       JOIN customers c ON c.id = cd.customer_id
+       WHERE c.is_archived = 0
+         AND COALESCE(cd.is_archived, 0) = 0
+         AND cd.expiration_date IS NOT NULL
+         AND trim(cd.expiration_date) != ''`
+    )
+    .all();
+
+  const custDocLabelsFr: Record<string, string> = {
+    CNI: 'Carte nationale (CNI)',
+    PASSPORT: 'Passeport',
+    DRIVING_LICENCE: 'Permis de conduire',
+    COMPANY_RC: 'Registre de commerce',
+    COMPANY_NIF: 'NIF société',
+    BON_COMMANDE: 'Bon de commande',
+    OTHER: 'Document client',
+  };
+  const custDocLabelsAr: Record<string, string> = {
+    CNI: 'بطاقة التعريف الوطنية',
+    PASSPORT: 'جواز السفر',
+    DRIVING_LICENCE: 'رخصة السياقة',
+    COMPANY_RC: 'السجل التجاري',
+    COMPANY_NIF: 'الرقم الجبائي NIF',
+    BON_COMMANDE: 'سند الطلب',
+    OTHER: 'وثيقة الزبون',
+  };
+
+  for (const cd of customerDocs) {
+    const remDays = diffCalendarDays(today, String(cd.expiration_date));
+    const threshold = Number(cd.reminder_days ?? 30);
+    if (remDays > threshold) continue;
+
+    const dedupeKey = `cust_doc:c${cd.customer_id}:d${cd.id}`;
+    activeKeys.add(dedupeKey);
+    const expired = remDays < 0;
+    const lblFr = custDocLabelsFr[cd.doc_category] ?? cd.doc_category;
+    const lblAr = custDocLabelsAr[cd.doc_category] ?? cd.doc_category;
+
+    upsertNotification(db, {
+      dedupeKey,
+      category: 'CUSTOMER_DOCUMENT',
+      severity: expired ? 'CRITICAL' : 'WARNING',
+      titleFr: expired ? `${lblFr} expiré(e) · ${cd.full_name}` : `${lblFr} expire bientôt · ${cd.full_name}`,
+      titleAr: expired ? `انتهت صلاحية ${lblAr} · ${cd.full_name}` : `تنتهي صلاحية ${lblAr} قريباً · ${cd.full_name}`,
+      messageFr: expired
+        ? `${cd.full_name} (${cd.phone}) — ${lblFr} (${cd.original_file_name}) expiré depuis ${Math.abs(remDays)} jour(s) (${cd.expiration_date}).`
+        : `${cd.full_name} (${cd.phone}) — ${lblFr} (${cd.original_file_name}) expire dans ${remDays} jour(s) (${cd.expiration_date}).`,
+      messageAr: expired
+        ? `${cd.full_name} (${cd.phone}) — ${lblAr} (${cd.original_file_name}) منتهية الصلاحية منذ ${Math.abs(remDays)} يوم (${cd.expiration_date}).`
+        : `${cd.full_name} (${cd.phone}) — ${lblAr} (${cd.original_file_name}) تنتهي خلال ${remDays} يوم (${cd.expiration_date}).`,
+      entityType: 'customer',
+      entityId: Number(cd.customer_id),
+      dueDate: String(cd.expiration_date).slice(0, 10),
+    });
+  }
+
+  const expiringLicences = db
+    .prepare<[], any>(
+      `SELECT id, full_name, phone, driving_licence_number, driving_licence_expiration_date
+       FROM customers
+       WHERE is_archived = 0
+         AND driving_licence_expiration_date IS NOT NULL
+         AND trim(driving_licence_expiration_date) != ''`
+    )
+    .all();
+
+  for (const cust of expiringLicences) {
+    const remDays = diffCalendarDays(today, String(cust.driving_licence_expiration_date));
+    if (remDays > 30) continue;
+    const dedupeKey = `cust_lic:c${cust.id}`;
+    activeKeys.add(dedupeKey);
+    const expired = remDays < 0;
+
+    upsertNotification(db, {
+      dedupeKey,
+      category: 'CUSTOMER_DOCUMENT',
+      severity: expired ? 'CRITICAL' : 'WARNING',
+      titleFr: expired
+        ? `Permis de conduire expiré · ${cust.full_name}`
+        : `Permis de conduire expire bientôt · ${cust.full_name}`,
+      titleAr: expired
+        ? `انتهت صلاحية رخصة السياقة · ${cust.full_name}`
+        : `تنتهي صلاحية رخصة السياقة قريباً · ${cust.full_name}`,
+      messageFr: expired
+        ? `${cust.full_name} (${cust.phone}) — Permis ${cust.driving_licence_number ?? ''} expiré depuis ${Math.abs(remDays)} jour(s) (${cust.driving_licence_expiration_date}).`
+        : `${cust.full_name} (${cust.phone}) — Permis ${cust.driving_licence_number ?? ''} expire dans ${remDays} jour(s) (${cust.driving_licence_expiration_date}).`,
+      messageAr: expired
+        ? `${cust.full_name} (${cust.phone}) — رخصة السياقة ${cust.driving_licence_number ?? ''} منتهية منذ ${Math.abs(remDays)} يوم (${cust.driving_licence_expiration_date}).`
+        : `${cust.full_name} (${cust.phone}) — رخصة السياقة ${cust.driving_licence_number ?? ''} تنتهي خلال ${remDays} يوم (${cust.driving_licence_expiration_date}).`,
+      entityType: 'customer',
+      entityId: Number(cust.id),
+      dueDate: String(cust.driving_licence_expiration_date).slice(0, 10),
     });
   }
 

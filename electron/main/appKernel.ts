@@ -5,11 +5,13 @@ import { runMigrations } from '../database/migrator.ts';
 import { getOrCreateLocalVaultKey } from '../security/crypto.ts';
 import { SessionStore } from '../security/sessionStore.ts';
 import { createIpcHandlers, type IpcHandlerFn } from './ipcRouter.ts';
+import type { DesktopPrintAdapter } from './printService.ts';
 
 export interface DesktopKernelConfig {
   productionDbPath: string;
   migrationsDir: string;
   vaultRootDir: string;
+  printAdapter?: DesktopPrintAdapter;
 }
 
 export interface DesktopKernel {
@@ -39,10 +41,15 @@ export function startDesktopKernel(config: DesktopKernelConfig): DesktopKernel {
 
   const vaultKey = getOrCreateLocalVaultKey(config.vaultRootDir);
   const sessionStore = new SessionStore('desktop');
-  const handlers = createIpcHandlers(db, sessionStore, {
-    vaultRootDir: config.vaultRootDir,
-    vaultKey,
-  });
+  const handlers = createIpcHandlers(
+    db,
+    sessionStore,
+    {
+      vaultRootDir: config.vaultRootDir,
+      vaultKey,
+    },
+    config.printAdapter
+  );
 
   return {
     db,

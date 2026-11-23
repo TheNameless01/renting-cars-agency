@@ -137,18 +137,9 @@ export function getCustomerProfile(db: Database.Database, customerId: number) {
     .map(mapRiskRecord);
 
   const documents: CustomerDocument[] = db
-    .prepare<[number], any>('SELECT * FROM customer_documents WHERE customer_id = ? ORDER BY id DESC')
+    .prepare<[number], any>('SELECT * FROM customer_documents WHERE customer_id = ? ORDER BY is_archived ASC, id DESC')
     .all(customerId)
-    .map((d) => ({
-      id: d.id,
-      customerId: d.customer_id,
-      docCategory: d.doc_category,
-      encryptedFilePath: d.encrypted_file_path,
-      originalFileName: d.original_file_name,
-      mimeType: d.mime_type,
-      uploadedByUserId: d.uploaded_by_user_id,
-      createdAt: d.created_at,
-    }));
+    .map(mapCustomerDocument);
 
   const rentalHistory = db
     .prepare<[number], any>(
@@ -498,8 +489,32 @@ export function resolveCustomerRiskRecord(
   return tx();
 }
 
+function mapCustomerDocument(d: any): CustomerDocument {
+  return {
+    id: Number(d.id),
+    customerId: Number(d.customer_id),
+    docCategory: d.doc_category,
+    encryptedFilePath: d.encrypted_file_path,
+    originalFileName: d.original_file_name,
+    mimeType: d.mime_type,
+    documentNumber: d.document_number ?? null,
+    issueDate: d.issue_date ?? null,
+    expirationDate: d.expiration_date ?? null,
+    reminderDays: Number(d.reminder_days ?? 30),
+    notes: d.notes ?? null,
+    isArchived: Number(d.is_archived ?? 0) === 1,
+    replacesDocId: d.replaces_doc_id != null ? Number(d.replaces_doc_id) : null,
+    replacedByDocId: d.replaced_by_doc_id != null ? Number(d.replaced_by_doc_id) : null,
+    archivedAt: d.archived_at ?? null,
+    archivedByUserId: d.archived_by_user_id != null ? Number(d.archived_by_user_id) : null,
+    uploadedByUserId: Number(d.uploaded_by_user_id),
+    createdAt: d.created_at,
+  };
+}
+
 /**
  * Encrypts and stores customer identity documents in the confined local vault (never public/).
+ * Supports non-destructive replacement (preserves historical version as archived).
  */
 export function uploadCustomerDocument(
   db: Database.Database,
@@ -512,10 +527,26 @@ export function uploadCustomerDocument(
     originalFileName: string;
     mimeType: string;
     base64Data: string;
+    documentNumber?: string | null;
+    issueDate?: string | null;
+    expirationDate?: string | null;
+    reminderDays?: number;
+    notes?: string | null;
+    replaceDocId?: number | null;
   }
 ): CustomerDocument {
   const customer = db.prepare<[number], { id: number }>('SELECT id FROM customers WHERE id = ?').get(input.customerId);
   if (!customer) throw new AuthError('NOT_FOUND', 'Client introuvable');
+
+  let oldDoc: any = null;
+  if (input.replaceDocId) {
+    oldDoc = db
+      .prepare<[number, number], any>('SELECT * FROM customer_documents WHERE id = ? AND customer_id = ?')
+      .get(input.replaceDocId, input.customerId);
+    if (!oldDoc) {
+      throw new AuthError('NOT_FOUND', 'Document à remplacer introuvable pour ce client');
+    }
+  }
 
   const rawBytes = Buffer.from(input.base64Data, 'base64');
   const encryptedBytes = encryptBuffer(rawBytes, vaultKey);
@@ -526,35 +557,148 @@ export function uploadCustomerDocument(
   fs.mkdirSync(path.dirname(fullPath), { recursive: true });
   fs.writeFileSync(fullPath, encryptedBytes, { mode: 0o600 });
 
-  const res = db
-    .prepare(
-      `INSERT INTO customer_documents (
-        customer_id, doc_category, encrypted_file_path, original_file_name, mime_type, uploaded_by_user_id
-      ) VALUES (?, ?, ?, ?, ?, ?)`
-    )
-    .run(input.customerId, input.docCategory, relativePath, input.originalFileName, input.mimeType, actor.id);
+  const tx = db.transaction(() => {
+    const res = db
+      .prepare(
+        `INSERT INTO customer_documents (
+          customer_id, doc_category, encrypted_file_path, original_file_name, mime_type,
+          document_number, issue_date, expiration_date, reminder_days, notes,
+          replaces_doc_id, uploaded_by_user_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        input.customerId,
+        input.docCategory,
+        relativePath,
+        input.originalFileName,
+        input.mimeType,
+        input.documentNumber ?? null,
+        input.issueDate ?? null,
+        input.expirationDate ?? null,
+        input.reminderDays ?? 30,
+        input.notes ?? null,
+        oldDoc ? Number(oldDoc.id) : null,
+        actor.id
+      );
 
-  const docId = Number(res.lastInsertRowid);
+    const docId = Number(res.lastInsertRowid);
+
+    if (oldDoc) {
+      db.prepare(
+        `UPDATE customer_documents
+         SET is_archived = 1,
+             replaced_by_doc_id = ?,
+             archived_at = COALESCE(archived_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+             archived_by_user_id = COALESCE(archived_by_user_id, ?)
+         WHERE id = ?`
+      ).run(docId, actor.id, oldDoc.id);
+    }
+
+    writeAuditLog(db, {
+      userId: actor.id,
+      usernameSnapshot: actor.username,
+      operation: oldDoc ? 'CUSTOMER_DOCUMENT_REPLACED' : 'CUSTOMER_DOCUMENT_UPLOADED',
+      entityType: 'customer_documents',
+      entityId: docId,
+      previousValue: oldDoc ? { replacedDocId: oldDoc.id, originalFileName: oldDoc.original_file_name } : undefined,
+      newValue: {
+        customerId: input.customerId,
+        docCategory: input.docCategory,
+        documentNumber: input.documentNumber ?? null,
+        expirationDate: input.expirationDate ?? null,
+      },
+    });
+
+    return docId;
+  });
+
+  const docId = tx();
+  const row = db.prepare<[number], any>('SELECT * FROM customer_documents WHERE id = ?').get(docId);
+  return mapCustomerDocument(row);
+}
+
+export function updateCustomerDocumentMeta(
+  db: Database.Database,
+  actor: { id: number; username: string },
+  input: {
+    docId: number;
+    documentNumber?: string | null;
+    issueDate?: string | null;
+    expirationDate?: string | null;
+    reminderDays?: number;
+    notes?: string | null;
+  }
+): CustomerDocument {
+  const existing = db.prepare<[number], any>('SELECT * FROM customer_documents WHERE id = ?').get(input.docId);
+  if (!existing) throw new AuthError('NOT_FOUND', 'Document client introuvable');
+
+  db.prepare(
+    `UPDATE customer_documents
+     SET document_number = ?,
+         issue_date = ?,
+         expiration_date = ?,
+         reminder_days = ?,
+         notes = ?
+     WHERE id = ?`
+  ).run(
+    input.documentNumber !== undefined ? input.documentNumber : existing.document_number,
+    input.issueDate !== undefined ? input.issueDate : existing.issue_date,
+    input.expirationDate !== undefined ? input.expirationDate : existing.expiration_date,
+    input.reminderDays !== undefined ? input.reminderDays : Number(existing.reminder_days ?? 30),
+    input.notes !== undefined ? input.notes : existing.notes,
+    input.docId
+  );
+
   writeAuditLog(db, {
     userId: actor.id,
     usernameSnapshot: actor.username,
-    operation: 'CUSTOMER_DOCUMENT_UPLOADED',
+    operation: 'CUSTOMER_DOCUMENT_META_UPDATED',
     entityType: 'customer_documents',
-    entityId: docId,
-    newValue: { customerId: input.customerId, docCategory: input.docCategory },
+    entityId: input.docId,
+    previousValue: {
+      documentNumber: existing.document_number,
+      expirationDate: existing.expiration_date,
+      reminderDays: existing.reminder_days,
+    },
+    newValue: {
+      documentNumber: input.documentNumber !== undefined ? input.documentNumber : existing.document_number,
+      expirationDate: input.expirationDate !== undefined ? input.expirationDate : existing.expiration_date,
+      reminderDays: input.reminderDays !== undefined ? input.reminderDays : existing.reminder_days,
+    },
   });
 
-  const row = db.prepare<[number], any>('SELECT * FROM customer_documents WHERE id = ?').get(docId);
-  return {
-    id: row.id,
-    customerId: row.customer_id,
-    docCategory: row.doc_category,
-    encryptedFilePath: row.encrypted_file_path,
-    originalFileName: row.original_file_name,
-    mimeType: row.mime_type,
-    uploadedByUserId: row.uploaded_by_user_id,
-    createdAt: row.created_at,
-  };
+  const updated = db.prepare<[number], any>('SELECT * FROM customer_documents WHERE id = ?').get(input.docId);
+  return mapCustomerDocument(updated);
+}
+
+export function archiveCustomerDocument(
+  db: Database.Database,
+  actor: { id: number; username: string },
+  docId: number,
+  reason?: string | null
+): CustomerDocument {
+  const existing = db.prepare<[number], any>('SELECT * FROM customer_documents WHERE id = ?').get(docId);
+  if (!existing) throw new AuthError('NOT_FOUND', 'Document client introuvable');
+
+  db.prepare(
+    `UPDATE customer_documents
+     SET is_archived = 1,
+         archived_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+         archived_by_user_id = ?
+     WHERE id = ?`
+  ).run(actor.id, docId);
+
+  writeAuditLog(db, {
+    userId: actor.id,
+    usernameSnapshot: actor.username,
+    operation: 'CUSTOMER_DOCUMENT_ARCHIVED',
+    entityType: 'customer_documents',
+    entityId: docId,
+    reason: reason ?? null,
+  });
+
+  const updated = db.prepare<[number], any>('SELECT * FROM customer_documents WHERE id = ?').get(docId);
+  return mapCustomerDocument(updated);
 }
 
 export function readCustomerDocument(
@@ -567,6 +711,9 @@ export function readCustomerDocument(
   if (!row) throw new AuthError('NOT_FOUND', 'Document client introuvable');
 
   const fullPath = resolveConfinedPath(vaultRootDir, row.encrypted_file_path);
+  if (!fs.existsSync(fullPath)) {
+    throw new AuthError('NOT_FOUND', 'Fichier chiffré manquant dans le coffre');
+  }
   const encryptedBytes = fs.readFileSync(fullPath);
   const plainBytes = decryptBuffer(encryptedBytes, vaultKey);
 

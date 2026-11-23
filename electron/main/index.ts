@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { startDesktopKernel, type DesktopKernel } from './appKernel.ts';
+import { createElectronPrintAdapter } from './printService.ts';
 import { buildSecureWindowOptions, isAllowedRendererNavigation } from './windowConfig.ts';
 
 let kernel: DesktopKernel | null = null;
@@ -37,6 +38,7 @@ app.whenReady().then(async () => {
     productionDbPath: path.join(userDataDir, 'data', 'agency_erp.db'),
     migrationsDir,
     vaultRootDir: path.join(userDataDir, 'secure_vault'),
+    printAdapter: createElectronPrintAdapter({ BrowserWindow }),
   });
 
   for (const [channel, handler] of Object.entries(kernel.handlers)) {

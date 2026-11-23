@@ -1,8 +1,9 @@
-import { AlertCircle, Plus, Search, ShieldCheck } from 'lucide-react';
+import { AlertCircle, FileText, Plus, Search, ShieldCheck } from 'lucide-react';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { toMinorUnits } from '../../../shared/constants/algeria.ts';
-import type { Vehicle } from '../../../shared/types/domain.ts';
+import type { GeneratedDocument, Vehicle } from '../../../shared/types/domain.ts';
+import { DocumentPreviewModal } from '../../components/DocumentPreviewModal.tsx';
 import { ModalDialog } from '../../components/ModalDialog.tsx';
 import { useToast } from '../../components/Toast.tsx';
 import { useAuth } from '../../hooks/useAuth.tsx';
@@ -32,6 +33,10 @@ export function DepositsTab() {
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [search, setSearch] = useState('');
   const [selectedDepositId, setSelectedDepositId] = useState<number | null>(null);
+  const [generatingDoc, setGeneratingDoc] = useState(false);
+  const [docPreviewOpen, setDocPreviewOpen] = useState(false);
+  const [generatedDoc, setGeneratedDoc] = useState<GeneratedDocument | null>(null);
+  const [generatedPdfBase64, setGeneratedPdfBase64] = useState<string | null>(null);
 
   // New traffic fine modal
   const [showFineModal, setShowFineModal] = useState(false);
@@ -46,6 +51,7 @@ export function DepositsTab() {
   const [fineNotes, setFineNotes] = useState('');
 
   const canManageDeposits = hasPermission('finance:manage_deposit');
+  const canGenerateDoc = hasPermission('documents:generate');
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -123,6 +129,29 @@ export function DepositsTab() {
       showError(err instanceof Error ? err.message : t.common.error);
     } finally {
       setSubmittingFine(false);
+    }
+  };
+
+  const handleGenerateDepositDoc = async (
+    depositId: number,
+    kind: 'DEPOSIT_RECEIPT' | 'DEPOSIT_SETTLEMENT'
+  ) => {
+    setGeneratingDoc(true);
+    try {
+      const res = await erpClient.generateDocument({
+        documentKind: kind,
+        depositId,
+        format: 'A4_PDF',
+        language: lang,
+        numeralSystem: numerals,
+      });
+      setGeneratedDoc(res.document);
+      setGeneratedPdfBase64(res.pdfBase64);
+      setDocPreviewOpen(true);
+    } catch (err) {
+      showError(err instanceof Error ? err.message : t.common.error);
+    } finally {
+      setGeneratingDoc(false);
     }
   };
 
@@ -265,18 +294,50 @@ export function DepositsTab() {
                       {formatCurrencyMinor(d.remainingHeldMinor, d.currency, lang, numerals)}
                     </td>
                     <td className="px-4 py-3 text-end">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedDepositId(d.id)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
-                      >
-                        <ShieldCheck className="w-3 h-3" />
-                        <span>
-                          {d.remainingHeldMinor > 0 && canManageDeposits
-                            ? t.finance.deposits.settleDeposit
-                            : t.common.view}
-                        </span>
-                      </button>
+                      <div className="inline-flex items-center gap-1.5">
+                        {canGenerateDoc && (
+                          <>
+                            <button
+                              type="button"
+                              disabled={generatingDoc}
+                              onClick={() => void handleGenerateDepositDoc(d.id, 'DEPOSIT_RECEIPT')}
+                              title={t.documents.triggers.depositReceiptPdf}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap shrink-0"
+                            >
+                              <FileText className="w-3 h-3 text-blue-700 dark:text-blue-400" />
+                              <span>{t.documents.triggers.depositReceiptPdf}</span>
+                            </button>
+                            {(d.deductedAmountMinor > 0 ||
+                              d.refundedAmountMinor > 0 ||
+                              d.status !== 'HELD') && (
+                              <button
+                                type="button"
+                                disabled={generatingDoc}
+                                onClick={() =>
+                                  void handleGenerateDepositDoc(d.id, 'DEPOSIT_SETTLEMENT')
+                                }
+                                title={t.documents.triggers.depositSettlementPdf}
+                                className="inline-flex items-center gap-1 px-2 py-1 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap shrink-0"
+                              >
+                                <FileText className="w-3 h-3 text-emerald-700 dark:text-emerald-400" />
+                                <span>{t.documents.triggers.depositSettlementPdf}</span>
+                              </button>
+                            )}
+                          </>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedDepositId(d.id)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap shrink-0"
+                        >
+                          <ShieldCheck className="w-3 h-3" />
+                          <span>
+                            {d.remainingHeldMinor > 0 && canManageDeposits
+                              ? t.finance.deposits.settleDeposit
+                              : t.common.view}
+                          </span>
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -495,6 +556,13 @@ export function DepositsTab() {
           />
         </div>
       </ModalDialog>
+
+      <DocumentPreviewModal
+        open={docPreviewOpen}
+        onClose={() => setDocPreviewOpen(false)}
+        initialDocument={generatedDoc}
+        initialPdfBase64={generatedPdfBase64}
+      />
     </div>
   );
 }

@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Clock,
   Download,
+  FileText,
   Lock,
   Pencil,
   Plus,
@@ -16,10 +17,12 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type {
+  GeneratedDocument,
   MaintenanceStatus,
   MaintenanceType,
   Vehicle,
 } from '../../../shared/types/domain.ts';
+import { DocumentPreviewModal } from '../../components/DocumentPreviewModal.tsx';
 import { useToast } from '../../components/Toast.tsx';
 import { useAuth } from '../../hooks/useAuth.tsx';
 import { useI18n } from '../../hooks/useI18n.tsx';
@@ -79,6 +82,7 @@ export function MaintenancePage() {
     hasPermission('maintenance:complete') ||
     hasPermission('maintenance:write') ||
     hasPermission('vehicles:write');
+  const canGenerateDoc = hasPermission('documents:generate');
 
   const [activeTab, setActiveTab] = useState<MaintenanceTab>('interventions');
   const [loading, setLoading] = useState(true);
@@ -113,6 +117,11 @@ export function MaintenancePage() {
 
   const [typeModalOpen, setTypeModalOpen] = useState(false);
   const [editingType, setEditingType] = useState<MaintenanceType | null>(null);
+
+  const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [docPreviewOpen, setDocPreviewOpen] = useState(false);
+  const [generatedDoc, setGeneratedDoc] = useState<GeneratedDocument | null>(null);
+  const [generatedPdfBase64, setGeneratedPdfBase64] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -251,6 +260,26 @@ export function MaintenancePage() {
       URL.revokeObjectURL(url);
     } catch (err) {
       showError(err instanceof Error ? err.message : t.common.error);
+    }
+  };
+
+  const handleGenerateMaintenancePdf = async (recordId: number) => {
+    setGeneratingPdf(true);
+    try {
+      const res = await erpClient.generateDocument({
+        documentKind: 'MAINTENANCE_REPORT',
+        maintenanceRecordId: recordId,
+        format: 'A4_PDF',
+        language: lang,
+        numeralSystem: numerals,
+      });
+      setGeneratedDoc(res.document);
+      setGeneratedPdfBase64(res.pdfBase64);
+      setDocPreviewOpen(true);
+    } catch (err) {
+      showError(err instanceof Error ? err.message : t.common.error);
+    } finally {
+      setGeneratingPdf(false);
     }
   };
 
@@ -527,6 +556,18 @@ export function MaintenancePage() {
                         </td>
                         <td className="px-4 py-3 text-end">
                           <div className="inline-flex items-center gap-1.5">
+                            {canGenerateDoc && (
+                              <button
+                                type="button"
+                                disabled={generatingPdf}
+                                onClick={() => void handleGenerateMaintenancePdf(r.id)}
+                                title={t.documents.triggers.maintenanceReportPdf}
+                                className="inline-flex items-center gap-1 px-2 py-1 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap shrink-0"
+                              >
+                                <FileText className="w-3 h-3 text-blue-700 dark:text-blue-400" />
+                                <span>{t.documents.triggers.maintenanceReportPdf}</span>
+                              </button>
+                            )}
                             {r.invoiceFilePath && (
                               <button
                                 type="button"
@@ -963,6 +1004,13 @@ export function MaintenancePage() {
         editingType={editingType}
         onClose={() => setTypeModalOpen(false)}
         onSaved={() => void loadData()}
+      />
+
+      <DocumentPreviewModal
+        open={docPreviewOpen}
+        onClose={() => setDocPreviewOpen(false)}
+        initialDocument={generatedDoc}
+        initialPdfBase64={generatedPdfBase64}
       />
     </div>
   );

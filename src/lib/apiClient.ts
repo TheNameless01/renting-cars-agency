@@ -1,6 +1,7 @@
 import { IPC_CHANNELS, type ElectronBridgeAPI, type IpcChannel, type IpcResult } from '../../electron/ipc/contracts.ts';
 import { PREVIEW_ENDPOINTS } from '../../shared/api/previewContracts.ts';
 import type {
+  AppLanguage,
   AppNotification,
   AuditLogEntry,
   AuthSession,
@@ -21,7 +22,11 @@ import type {
   DamageType,
   DepositChargeCategory,
   DepositStatus,
+  DocumentFormat,
+  DocumentKind,
+  DocumentTemplateConfig,
   ExpenseCategory,
+  GeneratedDocument,
   InspectionItem,
   InspectionItemCondition,
   InspectionPhoto,
@@ -30,6 +35,7 @@ import type {
   InventoryMovement,
   InventoryMovementType,
   InventoryPart,
+  Invoice,
   MaintenanceAlertState,
   MaintenancePartInput,
   MaintenanceRecord,
@@ -37,14 +43,19 @@ import type {
   MaintenanceType,
   MileageMode,
   NotificationSeverity,
+  NumeralSystem,
   PaymentDirection,
   PaymentMethod,
   PermissionCode,
+  ReportDataset,
+  ReportExportFormat,
+  ReportFilter,
   ReservationStatus,
   RiskLevel,
   RiskReason,
   RoleCode,
   Supplier,
+  SystemPrinterInfo,
   Vehicle,
   VehicleDamage,
   VehicleDocType,
@@ -1415,12 +1426,41 @@ export const erpClient = {
     originalFileName: string;
     mimeType: 'image/jpeg' | 'image/png' | 'image/webp' | 'application/pdf';
     base64Data: string;
+    documentNumber?: string | null;
+    issueDate?: string | null;
+    expirationDate?: string | null;
+    reminderDays?: number;
+    notes?: string | null;
+    replaceDocId?: number | null;
   }) =>
     callBackend<CustomerDocument>(
       IPC_CHANNELS.CUSTOMERS_UPLOAD_DOC,
       'POST',
       `${PREVIEW_ENDPOINTS.CUSTOMERS}/${payload.customerId}/documents`,
       payload
+    ),
+
+  updateCustomerDocMeta: (payload: {
+    docId: number;
+    documentNumber?: string | null;
+    issueDate?: string | null;
+    expirationDate?: string | null;
+    reminderDays?: number;
+    notes?: string | null;
+  }) =>
+    callBackend<CustomerDocument>(
+      IPC_CHANNELS.CUSTOMERS_UPDATE_DOC_META,
+      'PATCH',
+      `${PREVIEW_ENDPOINTS.CUSTOMERS}/documents/${payload.docId}`,
+      payload
+    ),
+
+  archiveCustomerDoc: (docId: number, reason?: string | null) =>
+    callBackend<CustomerDocument>(
+      IPC_CHANNELS.CUSTOMERS_ARCHIVE_DOC,
+      'POST',
+      `${PREVIEW_ENDPOINTS.CUSTOMERS}/documents/${docId}/archive`,
+      { docId, reason }
     ),
 
   readCustomerDoc: (docId: number) =>
@@ -2607,6 +2647,198 @@ export const erpClient = {
       IPC_CHANNELS.INVENTORY_ADJUST_STOCK,
       'POST',
       `${PREVIEW_ENDPOINTS.INVENTORY}/adjust`,
+      payload
+    ),
+
+  // Phase 5: Documents, Templates, Printing & Reports
+  generateDocument: (payload: {
+    documentKind: DocumentKind;
+    format?: DocumentFormat;
+    language?: AppLanguage;
+    numeralSystem?: NumeralSystem;
+    contractId?: number | null;
+    extensionId?: number | null;
+    paymentId?: number | null;
+    depositId?: number | null;
+    inspectionId?: number | null;
+    invoiceId?: number | null;
+    customerId?: number | null;
+    vehicleId?: number | null;
+    maintenanceRecordId?: number | null;
+    expenseId?: number | null;
+    cashSessionId?: number | null;
+    dateFrom?: string | null;
+    dateTo?: string | null;
+    reportFilter?: ReportFilter | null;
+    notes?: string | null;
+    taxRatePercent?: number;
+  }) =>
+    callBackend<{ document: GeneratedDocument; invoice: Invoice | null; pdfBase64: string }>(
+      IPC_CHANNELS.DOCUMENTS_GENERATE,
+      'POST',
+      `${PREVIEW_ENDPOINTS.DOCUMENTS}/generate`,
+      payload
+    ),
+
+  listDocuments: (filters?: {
+    search?: string;
+    documentKind?: DocumentKind;
+    format?: DocumentFormat;
+    customerId?: number;
+    vehicleId?: number;
+    contractId?: number;
+    dateFrom?: string;
+    dateTo?: string;
+    isCopy?: boolean;
+    limit?: number;
+  }) =>
+    callBackend<GeneratedDocument[]>(
+      IPC_CHANNELS.DOCUMENTS_LIST,
+      'GET',
+      `${PREVIEW_ENDPOINTS.DOCUMENTS}${buildQuery({
+        search: filters?.search,
+        documentKind: filters?.documentKind,
+        format: filters?.format,
+        customerId: filters?.customerId ? String(filters.customerId) : undefined,
+        vehicleId: filters?.vehicleId ? String(filters.vehicleId) : undefined,
+        contractId: filters?.contractId ? String(filters.contractId) : undefined,
+        dateFrom: filters?.dateFrom,
+        dateTo: filters?.dateTo,
+        isCopy: filters?.isCopy !== undefined ? String(filters.isCopy) : undefined,
+        limit: filters?.limit ? String(filters.limit) : undefined,
+      })}`,
+      filters
+    ),
+
+  getDocument: (id: number) =>
+    callBackend<GeneratedDocument>(
+      IPC_CHANNELS.DOCUMENTS_GET,
+      'GET',
+      `${PREVIEW_ENDPOINTS.DOCUMENTS}/${id}`,
+      { id }
+    ),
+
+  readDocumentPdf: (id: number) =>
+    callBackend<{ document: GeneratedDocument; originalFileName: string; mimeType: string; base64Data: string }>(
+      IPC_CHANNELS.DOCUMENTS_READ,
+      'GET',
+      `${PREVIEW_ENDPOINTS.DOCUMENTS}/${id}/read`,
+      { id }
+    ),
+
+  reprintDocument: (payload: {
+    sourceDocumentId: number;
+    format?: DocumentFormat;
+    language?: AppLanguage;
+  }) =>
+    callBackend<{ document: GeneratedDocument; pdfBase64: string }>(
+      IPC_CHANNELS.DOCUMENTS_REPRINT,
+      'POST',
+      `${PREVIEW_ENDPOINTS.DOCUMENTS}/${payload.sourceDocumentId}/reprint`,
+      payload
+    ),
+
+  listPrinters: () =>
+    callBackend<SystemPrinterInfo[]>(
+      IPC_CHANNELS.DOCUMENTS_LIST_PRINTERS,
+      'GET',
+      `${PREVIEW_ENDPOINTS.DOCUMENTS}/printers`
+    ),
+
+  printDocument: (payload: {
+    documentId: number;
+    printerName?: string | null;
+    silent?: boolean;
+    copies?: number;
+  }) =>
+    callBackend<{ printed: boolean; printerName: string | null; copies: number; message?: string; document: GeneratedDocument }>(
+      IPC_CHANNELS.DOCUMENTS_PRINT,
+      'POST',
+      `${PREVIEW_ENDPOINTS.DOCUMENTS}/${payload.documentId}/printed`,
+      payload
+    ),
+
+  getDocumentTemplates: () =>
+    callBackend<DocumentTemplateConfig>(
+      IPC_CHANNELS.DOCUMENTS_TEMPLATES_GET,
+      'GET',
+      `${PREVIEW_ENDPOINTS.DOCUMENTS}/templates`
+    ),
+
+  updateDocumentTemplates: (payload: {
+    defaultLanguage?: AppLanguage;
+    defaultFormat?: DocumentFormat;
+    thermalWidth?: '80MM' | '58MM';
+    defaultPrinterA4?: string;
+    defaultPrinterThermal?: string;
+    showLogo?: boolean;
+    showFiscalIds?: boolean;
+    showSignatureBoxes?: boolean;
+    invoiceFiscallyCompliant?: boolean;
+    invoiceTaxRatePercent?: number;
+    footerFr?: string;
+    footerAr?: string;
+    signatureAgencyFr?: string;
+    signatureAgencyAr?: string;
+    signatureCustomerFr?: string;
+    signatureCustomerAr?: string;
+    contractTermsFr?: string;
+    contractTermsAr?: string;
+    invoiceDisclaimerFr?: string;
+    invoiceDisclaimerAr?: string;
+    prefixes?: Partial<Record<DocumentKind, string>>;
+  }) =>
+    callBackend<DocumentTemplateConfig>(
+      IPC_CHANNELS.DOCUMENTS_TEMPLATES_UPDATE,
+      'PUT',
+      `${PREVIEW_ENDPOINTS.DOCUMENTS}/templates`,
+      payload
+    ),
+
+  uploadAgencyLogo: (payload: {
+    originalFileName: string;
+    mimeType: 'image/png' | 'image/jpeg';
+    base64Data: string;
+  }) =>
+    callBackend<DocumentTemplateConfig>(
+      IPC_CHANNELS.DOCUMENTS_LOGO_UPLOAD,
+      'POST',
+      `${PREVIEW_ENDPOINTS.DOCUMENTS}/logo`,
+      payload
+    ),
+
+  readAgencyLogo: () =>
+    callBackend<{ mimeType: string; base64Data: string } | null>(
+      IPC_CHANNELS.DOCUMENTS_LOGO_READ,
+      'GET',
+      `${PREVIEW_ENDPOINTS.DOCUMENTS}/logo`
+    ),
+
+  generateReport: (filter: ReportFilter) =>
+    callBackend<ReportDataset>(
+      IPC_CHANNELS.REPORTS_GENERATE,
+      'POST',
+      `${PREVIEW_ENDPOINTS.REPORTS}/generate`,
+      filter
+    ),
+
+  exportReportFile: (payload: {
+    filter: ReportFilter;
+    exportFormat: ReportExportFormat;
+    pdfFormat?: 'A4_PDF' | 'A4_LANDSCAPE_PDF';
+    language: AppLanguage;
+    numeralSystem?: NumeralSystem;
+  }) =>
+    callBackend<{
+      exportFormat: ReportExportFormat;
+      fileName: string;
+      mimeType: string;
+      base64Data: string;
+      document?: GeneratedDocument;
+    }>(
+      IPC_CHANNELS.REPORTS_EXPORT_FILE,
+      'POST',
+      `${PREVIEW_ENDPOINTS.REPORTS}/export`,
       payload
     ),
 };

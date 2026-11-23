@@ -38,6 +38,72 @@ function base64ToUint8Array(base64: string): Uint8Array {
   return bytes;
 }
 
+export function base64ToBlobUrl(base64: string, mimeType = 'application/pdf'): string {
+  const bytes = base64ToUint8Array(base64);
+  const blob = new Blob([bytes as unknown as BlobPart], { type: mimeType });
+  return URL.createObjectURL(blob);
+}
+
+export function downloadBase64File(fileName: string, mimeType: string, base64: string): void {
+  const bytes = base64ToUint8Array(base64);
+  const blob = new Blob([bytes as unknown as BlobPart], { type: mimeType });
+  downloadBlobFile(fileName, blob);
+}
+
+export function printPdfInBrowserIframe(base64: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    try {
+      const url = base64ToBlobUrl(base64, 'application/pdf');
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.width = '1px';
+      iframe.style.height = '1px';
+      iframe.style.opacity = '0';
+      iframe.style.pointerEvents = 'none';
+      iframe.style.border = '0';
+
+      let cleaned = false;
+      const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
+        window.setTimeout(() => {
+          if (iframe.parentNode) {
+            iframe.parentNode.removeChild(iframe);
+          }
+          URL.revokeObjectURL(url);
+        }, 1200);
+      };
+
+      iframe.onload = () => {
+        try {
+          const win = iframe.contentWindow;
+          if (win) {
+            win.focus();
+            win.print();
+          }
+          cleanup();
+          resolve();
+        } catch (err) {
+          cleanup();
+          reject(err instanceof Error ? err : new Error('Browser print failed'));
+        }
+      };
+
+      iframe.onerror = () => {
+        cleanup();
+        reject(new Error('Impossible de charger le PDF pour impression.'));
+      };
+
+      iframe.src = url;
+      document.body.appendChild(iframe);
+    } catch (err) {
+      reject(err instanceof Error ? err : new Error('Browser print initialization failed'));
+    }
+  });
+}
+
 export function buildPdfFromCanvases(canvases: HTMLCanvasElement[]): Blob {
   // A4 in PDF points (72 DPI): 595.28 x 841.89
   const pageWidthPt = 595.28;

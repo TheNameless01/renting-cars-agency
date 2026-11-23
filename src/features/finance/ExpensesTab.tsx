@@ -1,9 +1,16 @@
-import { Building, Download, Eye, Plus, RotateCcw, Search, Upload } from 'lucide-react';
+import { Building, Download, Eye, FileText, Plus, RotateCcw, Search, Upload } from 'lucide-react';
 import { useCallback, useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { toMinorUnits } from '../../../shared/constants/algeria.ts';
-import type { CurrencyCode, ExpenseCategory, PaymentMethod, Vehicle } from '../../../shared/types/domain.ts';
+import type {
+  CurrencyCode,
+  ExpenseCategory,
+  GeneratedDocument,
+  PaymentMethod,
+  Vehicle,
+} from '../../../shared/types/domain.ts';
 import { ConfirmDialog } from '../../components/ConfirmDialog.tsx';
+import { DocumentPreviewModal } from '../../components/DocumentPreviewModal.tsx';
 import { ModalDialog } from '../../components/ModalDialog.tsx';
 import { useToast } from '../../components/Toast.tsx';
 import { useAuth } from '../../hooks/useAuth.tsx';
@@ -79,8 +86,14 @@ export function ExpensesTab({ defaultVehicleId }: { defaultVehicleId?: number })
     base64Data: string;
   } | null>(null);
 
+  const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [docPreviewOpen, setDocPreviewOpen] = useState(false);
+  const [generatedDoc, setGeneratedDoc] = useState<GeneratedDocument | null>(null);
+  const [generatedPdfBase64, setGeneratedPdfBase64] = useState<string | null>(null);
+
   const canManageExpenses = hasPermission('finance:manage_expenses');
   const canReverseExpenses = hasPermission('finance:approve_adjustment');
+  const canGenerateDoc = hasPermission('documents:generate');
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -231,6 +244,26 @@ export function ExpensesTab({ defaultVehicleId }: { defaultVehicleId?: number })
       setPreviewDoc(doc);
     } catch (err) {
       showError(err instanceof Error ? err.message : t.common.error);
+    }
+  };
+
+  const handleGenerateExpensePdf = async (expenseId: number) => {
+    setGeneratingPdf(true);
+    try {
+      const res = await erpClient.generateDocument({
+        documentKind: 'EXPENSE_RECEIPT',
+        expenseId,
+        format: 'A4_PDF',
+        language: lang,
+        numeralSystem: numerals,
+      });
+      setGeneratedDoc(res.document);
+      setGeneratedPdfBase64(res.pdfBase64);
+      setDocPreviewOpen(true);
+    } catch (err) {
+      showError(err instanceof Error ? err.message : t.common.error);
+    } finally {
+      setGeneratingPdf(false);
     }
   };
 
@@ -433,6 +466,17 @@ export function ExpensesTab({ defaultVehicleId }: { defaultVehicleId?: number })
                     </td>
                     <td className="px-4 py-3 text-end">
                       <div className="inline-flex items-center gap-1.5">
+                        {canGenerateDoc && (
+                          <button
+                            type="button"
+                            disabled={generatingPdf}
+                            onClick={() => void handleGenerateExpensePdf(ex.id)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap shrink-0"
+                          >
+                            <FileText className="w-3 h-3 text-blue-700 dark:text-blue-400" />
+                            <span>{t.documents.triggers.expenseReceiptPdf}</span>
+                          </button>
+                        )}
                         {ex.hasReceiptDoc && (
                           <button
                             type="button"
@@ -867,6 +911,13 @@ export function ExpensesTab({ defaultVehicleId }: { defaultVehicleId?: number })
           />
         </div>
       </ConfirmDialog>
+
+      <DocumentPreviewModal
+        open={docPreviewOpen}
+        onClose={() => setDocPreviewOpen(false)}
+        initialDocument={generatedDoc}
+        initialPdfBase64={generatedPdfBase64}
+      />
     </div>
   );
 }

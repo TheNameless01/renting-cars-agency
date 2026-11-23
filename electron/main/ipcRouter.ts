@@ -3,6 +3,7 @@ import { ZodError } from 'zod';
 import {
   AdjustInventoryStockSchema,
   AddVehicleDamageSchema,
+  ArchiveCustomerDocSchema,
   BootstrapAdminSchema,
   CalculatePriceSchema,
   ChangePasswordSchema,
@@ -22,25 +23,34 @@ import {
   CreateTrafficFineSchema,
   CreateUserSchema,
   CreateVehicleSchema,
+  ExportReportSchema,
   ExtendContractSchema,
+  GenerateDocumentSchema,
+  ListDocumentsSchema,
   LoginSchema,
   OpenCashSessionSchema,
+  PrintDocumentSchema,
   RecordCashAdjustmentSchema,
   RecordInventoryMovementSchema,
   RecordPaymentSchema,
+  ReportFilterSchema,
+  ReprintDocumentSchema,
   ResolveRiskRecordSchema,
   ReverseExpenseSchema,
   ReversePaymentSchema,
   SettleDepositSchema,
   UnlockSessionSchema,
+  UpdateCustomerDocMetaSchema,
   UpdateCustomerSchema,
   UpdateDamageStatusSchema,
+  UpdateDocumentTemplatesSchema,
   UpdateInspectionDraftSchema,
   UpdateMaintenanceRecordSchema,
   UpdateReservationStatusSchema,
   UpdateSettingsBatchSchema,
   UpdateUserSchema,
   UpdateVehicleSchema,
+  UploadAgencyLogoSchema,
   UploadCustomerDocSchema,
   UploadInspectionPhotoSchema,
   UpsertCustomerCustomRateSchema,
@@ -94,6 +104,7 @@ import {
 import {
   addCustomerRiskRecord,
   archiveCustomer,
+  archiveCustomerDocument,
   checkCustomerEligibility,
   createCustomer,
   getCustomerProfile,
@@ -101,8 +112,27 @@ import {
   readCustomerDocument,
   resolveCustomerRiskRecord,
   updateCustomer,
+  updateCustomerDocumentMeta,
   uploadCustomerDocument,
 } from '../database/services/customerService.ts';
+import {
+  generateAndArchiveDocument,
+  getDocumentById,
+  getDocumentTemplateConfig,
+  listDocuments,
+  readAgencyLogo,
+  readArchivedDocumentPdf,
+  recordDocumentPrintEvent,
+  reprintArchivedDocument,
+  updateDocumentTemplateConfig,
+  uploadAgencyLogo,
+} from '../database/services/documentService.ts';
+import {
+  buildReportCsv,
+  buildReportXlsx,
+  generateReportDataset,
+} from '../database/services/reportService.ts';
+import { createNoopPrintAdapter, type DesktopPrintAdapter } from './printService.ts';
 import {
   createTrafficFine,
   getDepositDetail,
@@ -216,7 +246,8 @@ export interface IpcVaultContext {
 export function createIpcHandlers(
   db: Database.Database,
   sessionStore: SessionStore,
-  vault?: IpcVaultContext
+  vault?: IpcVaultContext,
+  printAdapter: DesktopPrintAdapter = createNoopPrintAdapter()
 ): Record<string, IpcHandlerFn> {
   const wrap = (fn: (envelope: IpcEnvelope<any>) => unknown): IpcHandlerFn => {
     return async (rawPayload?: unknown) => {
@@ -513,6 +544,20 @@ export function createIpcHandlers(
         vault.vaultKey,
         parsed
       );
+    }),
+
+    [IPC_CHANNELS.CUSTOMERS_UPDATE_DOC_META]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'customers:write');
+      const parsed = UpdateCustomerDocMetaSchema.parse(env.data);
+      return updateCustomerDocumentMeta(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    [IPC_CHANNELS.CUSTOMERS_ARCHIVE_DOC]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'customers:write');
+      const parsed = ArchiveCustomerDocSchema.parse(env.data);
+      return archiveCustomerDocument(db, { id: session.userId, username: session.username }, parsed.docId, parsed.reason);
     }),
 
     [IPC_CHANNELS.CUSTOMERS_READ_DOC]: wrap((env) => {
@@ -1321,6 +1366,182 @@ export function createIpcHandlers(
       requirePermission(db, session, 'inventory:adjust_stock');
       const parsed = AdjustInventoryStockSchema.parse(env.data);
       return adjustInventoryStock(db, { id: session.userId, username: session.username }, parsed);
+    }),
+
+    // Phase 5: Documents, PDF Generation, Templates, Printing & Reports
+    [IPC_CHANNELS.DOCUMENTS_GENERATE]: wrap(async (env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'documents:generate');
+      if (!vault) throw new Error('Vault non configuré');
+      const parsed = GenerateDocumentSchema.parse(env.data);
+      return generateAndArchiveDocument(
+        db,
+        { id: session.userId, username: session.username },
+        vault.vaultRootDir,
+        vault.vaultKey,
+        parsed as any
+      );
+    }),
+
+    [IPC_CHANNELS.DOCUMENTS_LIST]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['documents:view', 'documents:generate']);
+      const parsed = env.data ? ListDocumentsSchema.parse(env.data) : undefined;
+      return listDocuments(db, parsed);
+    }),
+
+    [IPC_CHANNELS.DOCUMENTS_GET]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['documents:view', 'documents:generate']);
+      return getDocumentById(db, Number(env.data?.id ?? env.data));
+    }),
+
+    [IPC_CHANNELS.DOCUMENTS_READ]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['documents:view', 'documents:generate']);
+      if (!vault) throw new Error('Vault non configuré');
+      return readArchivedDocumentPdf(db, vault.vaultRootDir, vault.vaultKey, Number(env.data?.id ?? env.data));
+    }),
+
+    [IPC_CHANNELS.DOCUMENTS_REPRINT]: wrap(async (env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['documents:reprint', 'documents:generate']);
+      if (!vault) throw new Error('Vault non configuré');
+      const parsed = ReprintDocumentSchema.parse(env.data);
+      return reprintArchivedDocument(
+        db,
+        { id: session.userId, username: session.username },
+        vault.vaultRootDir,
+        vault.vaultKey,
+        parsed
+      );
+    }),
+
+    [IPC_CHANNELS.DOCUMENTS_LIST_PRINTERS]: wrap(async (env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['documents:view', 'documents:generate', 'documents:manage_templates']);
+      return printAdapter.listPrinters();
+    }),
+
+    [IPC_CHANNELS.DOCUMENTS_PRINT]: wrap(async (env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['documents:view', 'documents:reprint', 'documents:generate']);
+      if (!vault) throw new Error('Vault non configuré');
+      const parsed = PrintDocumentSchema.parse(env.data);
+      const pdf = readArchivedDocumentPdf(db, vault.vaultRootDir, vault.vaultKey, parsed.documentId);
+      const printRes = await printAdapter.printPdf({
+        pdfBytes: Buffer.from(pdf.base64Data, 'base64'),
+        documentNumber: pdf.document.documentNumber,
+        format: pdf.document.format,
+        printerName: parsed.printerName ?? null,
+        silent: parsed.silent,
+        copies: parsed.copies,
+      });
+      const updatedDoc = recordDocumentPrintEvent(
+        db,
+        { id: session.userId, username: session.username },
+        parsed.documentId,
+        { printerName: parsed.printerName, copies: parsed.copies, silent: parsed.silent }
+      );
+      return { ...printRes, document: updatedDoc };
+    }),
+
+    [IPC_CHANNELS.DOCUMENTS_TEMPLATES_GET]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, [
+        'documents:view',
+        'documents:generate',
+        'documents:manage_templates',
+        'settings:manage',
+      ]);
+      return getDocumentTemplateConfig(db);
+    }),
+
+    [IPC_CHANNELS.DOCUMENTS_TEMPLATES_UPDATE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['documents:manage_templates', 'settings:manage']);
+      const parsed = UpdateDocumentTemplatesSchema.parse(env.data);
+      return updateDocumentTemplateConfig(db, { id: session.userId, username: session.username }, parsed as any);
+    }),
+
+    [IPC_CHANNELS.DOCUMENTS_LOGO_UPLOAD]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['documents:manage_templates', 'settings:manage']);
+      if (!vault) throw new Error('Vault non configuré');
+      const parsed = UploadAgencyLogoSchema.parse(env.data);
+      return uploadAgencyLogo(
+        db,
+        { id: session.userId, username: session.username },
+        vault.vaultRootDir,
+        vault.vaultKey,
+        parsed
+      );
+    }),
+
+    [IPC_CHANNELS.DOCUMENTS_LOGO_READ]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['documents:view', 'documents:generate', 'documents:manage_templates', 'settings:manage']);
+      if (!vault) throw new Error('Vault non configuré');
+      return readAgencyLogo(db, vault.vaultRootDir, vault.vaultKey);
+    }),
+
+    [IPC_CHANNELS.REPORTS_GENERATE]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requireAnyPermission(session.userId, ['reports:view', 'reports:export']);
+      const parsed = ReportFilterSchema.parse(env.data);
+      return generateReportDataset(db, parsed);
+    }),
+
+    [IPC_CHANNELS.REPORTS_EXPORT_FILE]: wrap(async (env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'reports:export');
+      const parsed = ExportReportSchema.parse(env.data);
+      const dataset = generateReportDataset(db, { ...parsed.filter, language: parsed.language });
+
+      if (parsed.exportFormat === 'CSV') {
+        const csv = buildReportCsv(dataset, parsed.language);
+        return {
+          exportFormat: 'CSV',
+          fileName: `${dataset.reportCode}_${parsed.language}.csv`,
+          mimeType: 'text/csv;charset=utf-8',
+          base64Data: Buffer.from(csv, 'utf8').toString('base64'),
+        };
+      }
+      if (parsed.exportFormat === 'XLSX') {
+        const buf = await buildReportXlsx(dataset, parsed.language);
+        return {
+          exportFormat: 'XLSX',
+          fileName: `${dataset.reportCode}_${parsed.language}.xlsx`,
+          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          base64Data: buf.toString('base64'),
+        };
+      }
+      if (!vault) throw new Error('Vault non configuré');
+      const docKind = parsed.filter.category === 'FINANCIAL' ? 'FINANCIAL_SUMMARY' : 'CUSTOM_REPORT';
+      const generated = await generateAndArchiveDocument(
+        db,
+        { id: session.userId, username: session.username },
+        vault.vaultRootDir,
+        vault.vaultKey,
+        {
+          documentKind: docKind,
+          format: parsed.pdfFormat ?? 'A4_PDF',
+          language: parsed.language,
+          numeralSystem: parsed.numeralSystem,
+          dateFrom: parsed.filter.dateFrom ?? null,
+          dateTo: parsed.filter.dateTo ?? null,
+          customerId: parsed.filter.customerId ?? null,
+          vehicleId: parsed.filter.vehicleId ?? null,
+          reportFilter: parsed.filter,
+        }
+      );
+      return {
+        exportFormat: 'PDF',
+        fileName: generated.document.originalFileName,
+        mimeType: 'application/pdf',
+        base64Data: generated.pdfBase64,
+        document: generated.document,
+      };
     }),
   };
 }

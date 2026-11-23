@@ -1,7 +1,12 @@
-import { Download, Eye, ShieldCheck, Upload } from 'lucide-react';
+import { Download, Eye, FileText, ShieldCheck, Upload } from 'lucide-react';
 import { useCallback, useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
 import { fromMinorUnits, toMinorUnits } from '../../../shared/constants/algeria.ts';
-import type { DepositChargeCategory, PaymentMethod } from '../../../shared/types/domain.ts';
+import type {
+  DepositChargeCategory,
+  GeneratedDocument,
+  PaymentMethod,
+} from '../../../shared/types/domain.ts';
+import { DocumentPreviewModal } from '../../components/DocumentPreviewModal.tsx';
 import { ModalDialog } from '../../components/ModalDialog.tsx';
 import { useToast } from '../../components/Toast.tsx';
 import { useAuth } from '../../hooks/useAuth.tsx';
@@ -40,7 +45,13 @@ export function DepositSettleModal({ depositId, onClose, onSettled }: DepositSet
     base64Data: string;
   } | null>(null);
 
+  const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [docPreviewOpen, setDocPreviewOpen] = useState(false);
+  const [generatedDoc, setGeneratedDoc] = useState<GeneratedDocument | null>(null);
+  const [generatedPdfBase64, setGeneratedPdfBase64] = useState<string | null>(null);
+
   const canManageDeposits = hasPermission('finance:manage_deposit');
+  const canGenerateDoc = hasPermission('documents:generate');
 
   const loadDetail = useCallback(async () => {
     if (depositId == null) return;
@@ -100,6 +111,27 @@ export function DepositSettleModal({ depositId, onClose, onSettled }: DepositSet
       setPreviewDoc(doc);
     } catch (err) {
       showError(err instanceof Error ? err.message : t.common.error);
+    }
+  };
+
+  const handleGeneratePdf = async (kind: 'DEPOSIT_RECEIPT' | 'DEPOSIT_SETTLEMENT') => {
+    if (!detail) return;
+    setGeneratingPdf(true);
+    try {
+      const res = await erpClient.generateDocument({
+        documentKind: kind,
+        depositId: detail.deposit.id,
+        format: 'A4_PDF',
+        language: lang,
+        numeralSystem: numerals,
+      });
+      setGeneratedDoc(res.document);
+      setGeneratedPdfBase64(res.pdfBase64);
+      setDocPreviewOpen(true);
+    } catch (err) {
+      showError(err instanceof Error ? err.message : t.common.error);
+    } finally {
+      setGeneratingPdf(false);
     }
   };
 
@@ -183,25 +215,54 @@ export function DepositSettleModal({ depositId, onClose, onSettled }: DepositSet
         disableClose={submitting}
         onSubmit={canManageDeposits && remaining > 0 ? handleSubmit : undefined}
         footer={
-          <>
-            <button
-              type="button"
-              disabled={submitting}
-              onClick={onClose}
-              className="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800"
-            >
-              {t.common.close}
-            </button>
-            {canManageDeposits && remaining > 0 && (
-              <button
-                type="submit"
-                disabled={submitting || exceedsRemaining || parsedDeduct + parsedRefund <= 0}
-                className="px-4 py-2 rounded-lg bg-blue-900 hover:bg-blue-800 dark:bg-blue-700 dark:hover:bg-blue-600 text-white text-xs font-medium disabled:opacity-50"
-              >
-                {submitting ? t.common.loading : t.finance.deposits.settleDeposit}
-              </button>
+          <div className="w-full flex flex-wrap items-center justify-between gap-2">
+            {d && canGenerateDoc ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={generatingPdf}
+                  onClick={() => void handleGeneratePdf('DEPOSIT_RECEIPT')}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap shrink-0"
+                >
+                  <FileText className="w-3.5 h-3.5 text-blue-700 dark:text-blue-400" />
+                  <span>{t.documents.triggers.depositReceiptPdf}</span>
+                </button>
+                {(d.deductedAmountMinor > 0 || d.refundedAmountMinor > 0 || d.status !== 'HELD') && (
+                  <button
+                    type="button"
+                    disabled={generatingPdf}
+                    onClick={() => void handleGeneratePdf('DEPOSIT_SETTLEMENT')}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap shrink-0"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-emerald-700 dark:text-emerald-400" />
+                    <span>{t.documents.triggers.depositSettlementPdf}</span>
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div />
             )}
-          </>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={onClose}
+                className="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                {t.common.close}
+              </button>
+              {canManageDeposits && remaining > 0 && (
+                <button
+                  type="submit"
+                  disabled={submitting || exceedsRemaining || parsedDeduct + parsedRefund <= 0}
+                  className="px-4 py-2 rounded-lg bg-blue-900 hover:bg-blue-800 dark:bg-blue-700 dark:hover:bg-blue-600 text-white text-xs font-medium disabled:opacity-50"
+                >
+                  {submitting ? t.common.loading : t.finance.deposits.settleDeposit}
+                </button>
+              )}
+            </div>
+          </div>
         }
       >
         {loading || !detail || !d ? (
@@ -529,6 +590,13 @@ export function DepositSettleModal({ depositId, onClose, onSettled }: DepositSet
             />
           ))}
       </ModalDialog>
+
+      <DocumentPreviewModal
+        open={docPreviewOpen}
+        onClose={() => setDocPreviewOpen(false)}
+        initialDocument={generatedDoc}
+        initialPdfBase64={generatedPdfBase64}
+      />
     </>
   );
 }

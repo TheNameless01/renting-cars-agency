@@ -360,6 +360,26 @@ export const UploadCustomerDocSchema = z.object({
   originalFileName: z.string().trim().min(1).max(200),
   mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']),
   base64Data: z.string().min(4).max(8_000_000),
+  documentNumber: z.string().trim().max(100).nullable().optional(),
+  issueDate: z.string().nullable().optional(),
+  expirationDate: z.string().nullable().optional(),
+  reminderDays: z.number().int().min(0).max(365).default(30).optional(),
+  notes: z.string().trim().max(1000).nullable().optional(),
+  replaceDocId: z.number().int().positive().nullable().optional(),
+});
+
+export const UpdateCustomerDocMetaSchema = z.object({
+  docId: z.number().int().positive(),
+  documentNumber: z.string().trim().max(100).nullable().optional(),
+  issueDate: z.string().nullable().optional(),
+  expirationDate: z.string().nullable().optional(),
+  reminderDays: z.number().int().min(0).max(365).optional(),
+  notes: z.string().trim().max(1000).nullable().optional(),
+});
+
+export const ArchiveCustomerDocSchema = z.object({
+  docId: z.number().int().positive(),
+  reason: z.string().trim().max(500).nullable().optional(),
 });
 
 export const CreateReservationSchema = z.object({
@@ -639,6 +659,132 @@ export const AdjustInventoryStockSchema = z.object({
   movementDate: z.string().min(8).max(30).optional(),
 });
 
+// Phase 5: Documents, Templates, Printing, and Reports
+export const DocumentKindEnum = z.enum([
+  'RENTAL_CONTRACT',
+  'CONTRACT_AMENDMENT',
+  'DEPARTURE_INSPECTION',
+  'RETURN_INSPECTION',
+  'DAMAGE_REPORT',
+  'PAYMENT_RECEIPT',
+  'DEPOSIT_RECEIPT',
+  'DEPOSIT_SETTLEMENT',
+  'INVOICE',
+  'EXPENSE_RECEIPT',
+  'MAINTENANCE_REPORT',
+  'VEHICLE_HISTORY',
+  'CUSTOMER_STATEMENT',
+  'CASH_REGISTER_CLOSING',
+  'FINANCIAL_SUMMARY',
+  'CUSTOM_REPORT',
+]);
 
+export const DocumentFormatEnum = z.enum([
+  'A4_PDF',
+  'A4_LANDSCAPE_PDF',
+  'THERMAL_80MM',
+  'THERMAL_58MM',
+]);
 
+export const ReportFilterSchema = z.object({
+  category: z.enum(['FINANCIAL', 'FLEET', 'OPERATIONAL', 'CUSTOM']),
+  reportCode: z.string().trim().max(64).optional(),
+  dateFrom: z.string().max(32).optional(),
+  dateTo: z.string().max(32).optional(),
+  customerId: z.number().int().positive().nullable().optional(),
+  vehicleId: z.number().int().positive().nullable().optional(),
+  documentKind: DocumentKindEnum.nullable().optional(),
+  transactionType: z.string().trim().max(64).nullable().optional(),
+  userId: z.number().int().positive().nullable().optional(),
+  status: z.string().trim().max(64).nullable().optional(),
+  expenseCategory: z.string().trim().max(64).nullable().optional(),
+  includeSections: z.array(z.string().trim().max(64)).optional(),
+  language: z.enum(['fr', 'ar']).optional(),
+});
 
+export const GenerateDocumentSchema = z.object({
+  documentKind: DocumentKindEnum,
+  format: DocumentFormatEnum.optional(),
+  language: z.enum(['fr', 'ar']).default('fr'),
+  numeralSystem: z.enum(['latin', 'arabic']).default('latin'),
+  contractId: z.number().int().positive().nullable().optional(),
+  extensionId: z.number().int().positive().nullable().optional(),
+  paymentId: z.number().int().positive().nullable().optional(),
+  depositId: z.number().int().positive().nullable().optional(),
+  inspectionId: z.number().int().positive().nullable().optional(),
+  invoiceId: z.number().int().positive().nullable().optional(),
+  customerId: z.number().int().positive().nullable().optional(),
+  vehicleId: z.number().int().positive().nullable().optional(),
+  maintenanceRecordId: z.number().int().positive().nullable().optional(),
+  expenseId: z.number().int().positive().nullable().optional(),
+  cashSessionId: z.number().int().positive().nullable().optional(),
+  dateFrom: z.string().max(32).nullable().optional(),
+  dateTo: z.string().max(32).nullable().optional(),
+  reportFilter: ReportFilterSchema.nullable().optional(),
+  notes: z.string().trim().max(1000).nullable().optional(),
+  taxRatePercent: z.number().min(0).max(100).optional(),
+});
+
+export const ListDocumentsSchema = z.object({
+  search: z.string().trim().max(120).optional(),
+  documentKind: DocumentKindEnum.optional(),
+  format: DocumentFormatEnum.optional(),
+  customerId: z.number().int().positive().optional(),
+  vehicleId: z.number().int().positive().optional(),
+  contractId: z.number().int().positive().optional(),
+  dateFrom: z.string().max(32).optional(),
+  dateTo: z.string().max(32).optional(),
+  isCopy: z.boolean().optional(),
+  limit: z.number().int().min(1).max(500).optional(),
+});
+
+export const ReprintDocumentSchema = z.object({
+  sourceDocumentId: z.number().int().positive(),
+  format: DocumentFormatEnum.optional(),
+  language: z.enum(['fr', 'ar']).optional(),
+});
+
+export const PrintDocumentSchema = z.object({
+  documentId: z.number().int().positive(),
+  printerName: z.string().trim().max(255).nullable().optional(),
+  silent: z.boolean().default(false),
+  copies: z.number().int().min(1).max(10).default(1),
+});
+
+export const UploadAgencyLogoSchema = z.object({
+  originalFileName: z.string().trim().min(1).max(200),
+  mimeType: z.enum(['image/png', 'image/jpeg']),
+  base64Data: z.string().min(4).max(4_000_000),
+});
+
+export const UpdateDocumentTemplatesSchema = z.object({
+  defaultLanguage: z.enum(['fr', 'ar']).optional(),
+  defaultFormat: DocumentFormatEnum.optional(),
+  thermalWidth: z.enum(['80MM', '58MM']).optional(),
+  defaultPrinterA4: z.string().max(255).optional(),
+  defaultPrinterThermal: z.string().max(255).optional(),
+  showLogo: z.boolean().optional(),
+  showFiscalIds: z.boolean().optional(),
+  showSignatureBoxes: z.boolean().optional(),
+  invoiceFiscallyCompliant: z.boolean().optional(),
+  invoiceTaxRatePercent: z.number().min(0).max(100).optional(),
+  footerFr: z.string().max(600).optional(),
+  footerAr: z.string().max(600).optional(),
+  signatureAgencyFr: z.string().max(200).optional(),
+  signatureAgencyAr: z.string().max(200).optional(),
+  signatureCustomerFr: z.string().max(200).optional(),
+  signatureCustomerAr: z.string().max(200).optional(),
+  contractTermsFr: z.string().max(3000).optional(),
+  contractTermsAr: z.string().max(3000).optional(),
+  invoiceDisclaimerFr: z.string().max(600).optional(),
+  invoiceDisclaimerAr: z.string().max(600).optional(),
+  prefixes: z.record(DocumentKindEnum, z.string().trim().min(1).max(16)).optional(),
+});
+
+export const ExportReportSchema = z.object({
+  filter: ReportFilterSchema,
+  exportFormat: z.enum(['CSV', 'XLSX', 'PDF']),
+  pdfFormat: z.enum(['A4_PDF', 'A4_LANDSCAPE_PDF']).optional(),
+  language: z.enum(['fr', 'ar']).default('fr'),
+  numeralSystem: z.enum(['latin', 'arabic']).default('latin'),
+});

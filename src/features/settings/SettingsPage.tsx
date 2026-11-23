@@ -1,5 +1,6 @@
-import { Edit3, Plus, RefreshCw, Save } from 'lucide-react';
+import { Edit3, FileText, Plus, RefreshCw, Save } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import { fromMinorUnits, toMinorUnits } from '../../../shared/constants/algeria.ts';
 import type { AppLanguage, AppTheme, AuditLogEntry, NumeralSystem } from '../../../shared/types/domain.ts';
 import { ModalDialog } from '../../components/ModalDialog.tsx';
@@ -20,6 +21,10 @@ export function SettingsPage() {
 
   const canManage = hasPermission('settings:manage');
   const canViewAudit = hasPermission('audit:view');
+  const canAccessDocTemplates =
+    hasPermission('documents:manage_templates') ||
+    hasPermission('documents:view') ||
+    canManage;
 
   const [activeTab, setActiveTab] = useState<SettingsTab>('agency');
   const [settings, setSettings] = useState<Record<string, string>>({});
@@ -129,9 +134,20 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">{t.settings.title}</h2>
-        <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">{t.settings.subtitle}</p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">{t.settings.title}</h2>
+          <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">{t.settings.subtitle}</p>
+        </div>
+        {canAccessDocTemplates && (
+          <Link
+            to="/documents?tab=templates"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap shrink-0"
+          >
+            <FileText className="w-3.5 h-3.5 text-blue-700 dark:text-blue-400" />
+            <span>{t.documents.tabs.templates}</span>
+          </Link>
+        )}
       </div>
 
       {!canManage && (

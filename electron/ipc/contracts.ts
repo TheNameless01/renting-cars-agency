@@ -66,6 +66,8 @@ export const IPC_CHANNELS = {
   CUSTOMERS_ADD_RISK: 'customers:addRisk',
   CUSTOMERS_RESOLVE_RISK: 'customers:resolveRisk',
   CUSTOMERS_UPLOAD_DOC: 'customers:uploadDoc',
+  CUSTOMERS_UPDATE_DOC_META: 'customers:updateDocMeta',
+  CUSTOMERS_ARCHIVE_DOC: 'customers:archiveDoc',
   CUSTOMERS_READ_DOC: 'customers:readDoc',
   CUSTOMERS_CHECK_ELIGIBILITY: 'customers:checkEligibility',
 
@@ -160,7 +162,18 @@ export const IPC_CHANNELS = {
 
   DOCUMENTS_GENERATE: 'documents:generate',
   DOCUMENTS_LIST: 'documents:list',
+  DOCUMENTS_GET: 'documents:get',
+  DOCUMENTS_READ: 'documents:read',
   DOCUMENTS_REPRINT: 'documents:reprint',
+  DOCUMENTS_LIST_PRINTERS: 'documents:listPrinters',
+  DOCUMENTS_PRINT: 'documents:print',
+  DOCUMENTS_TEMPLATES_GET: 'documents:getTemplates',
+  DOCUMENTS_TEMPLATES_UPDATE: 'documents:updateTemplates',
+  DOCUMENTS_LOGO_UPLOAD: 'documents:uploadLogo',
+  DOCUMENTS_LOGO_READ: 'documents:readLogo',
+
+  REPORTS_GENERATE: 'reports:generate',
+  REPORTS_EXPORT_FILE: 'reports:exportFile',
 
   NOTIFICATIONS_LIST: 'notifications:list',
   NOTIFICATIONS_MARK_READ: 'notifications:markRead',
