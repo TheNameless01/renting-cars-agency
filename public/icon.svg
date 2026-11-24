@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Car Rental ERP Desktop Icon">
+  <rect x="24" y="24" width="464" height="464" rx="108" fill="#0B1B36" />
+  <rect x="28" y="28" width="456" height="456" rx="104" fill="none" stroke="#1E3A6E" stroke-width="6" />
+
+  <rect x="96" y="362" width="320" height="14" rx="7" fill="#2563EB" />
+
+  <path d="M 156 226 L 182 154 C 188 138 202 128 220 128 H 292 C 310 128 324 138 330 154 L 356 226 Z" fill="#FFFFFF" />
+  <path d="M 180 218 L 198 164 C 202 154 210 148 222 148 H 290 C 302 148 310 154 314 164 L 332 218 Z" fill="#0B1B36" />
+
+  <rect x="116" y="218" width="280" height="86" rx="26" fill="#FFFFFF" />
+
+  <rect x="138" y="244" width="46" height="20" rx="10" fill="#2563EB" />
+  <rect x="328" y="244" width="46" height="20" rx="10" fill="#2563EB" />
+
+  <rect x="214" y="248" width="84" height="14" rx="7" fill="#0B1B36" />
+
+  <rect x="138" y="294" width="44" height="42" rx="12" fill="#FFFFFF" />
+  <rect x="330" y="294" width="44" height="42" rx="12" fill="#FFFFFF" />
+</svg>
