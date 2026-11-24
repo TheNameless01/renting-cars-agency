@@ -51,6 +51,31 @@
 
 ---
 
-### 4. Sauvegarde et Restauration / النسخ الاحتياطي والاسترجاع
-- Les sauvegardes automatiques et manuelles utilisent l'API de sauvegarde en ligne SQLite afin de garantir l'intégrité des données sans corruption.
-- **Restauration (Admin uniquement)** : Avant toute restauration, le système crée automatiquement une sauvegarde de sécurité de la base actuelle.
+### 4. Sauvegardes Chiffrées, Restauration & Installation Windows / النسخ الاحتياطي المشفر، الاسترجاع والتثبيت على ويندوز
+
+#### A. Sauvegardes Automatiques & Manuelles (`/backups`) — النسخ الاحتياطي التلقائي واليدوي
+- **Sauvegarde automatique quotidienne** : Lorsqu'elle est activée dans **Paramètres → Sauvegardes**, l'application crée chaque jour à l'heure prévue une archive chiffrée `.agbkp` contenant la base SQLite (via l'API de sauvegarde en ligne) **et l'ensemble des pièces chiffrées du coffre** (CNI, permis, photos d'inspection, factures, PDF). Les anciennes sauvegardes automatiques dépassant la rétention configurée sont purgées sans jamais supprimer vos sauvegardes manuelles.
+  - **النسخ التلقائي اليومي**: يقوم النظام يومياً في الوقت المحدد بإنشاء نسخة مشفرة (`.agbkp`) تشمل قاعدة البيانات وكافة الوثائق والصور المشفرة، مع حذف النسخ التلقائية القديمة فقط وفق عدد الاحتفاظ المحدد دون المساس بالنسخ اليدوية.
+- **Sauvegarde manuelle (2 modes de chiffrement)** :
+  1. **Clé de récupération du coffre (`VAULT_RECOVERY_KEY`)** : Idéale pour le PC de l'agence ou une restauration avec votre fiche de clé imprimée (`AGL-RK1-...`).
+  2. **Phrase secrète (`PASSPHRASE`, min. 8 caractères)** : Recommandée avant de transporter une sauvegarde sur clé USB vers un autre ordinateur.
+  - **النسخ اليدوي**: اختر التشفير بمفتاح استرجاع الخزنة (`AGL-RK1-...`) للاستعمال المحلي، أو بعبارة سرية (8 أحرف على الأقل) عند نقل النسخة على ذاكرة USB.
+
+#### B. Clé de Récupération du Coffre (`AGL-RK1-...`) — مفتاح استرجاع الخزنة
+- Dans **Sauvegardes → Clé de récupération**, saisissez votre mot de passe Administrateur pour afficher la clé `AGL-RK1-...`. **Imprimez-la ou notez-la en lieu sûr hors de l'ordinateur** (coffre physique de l'agence). Sans cette clé (ou la phrase secrète choisie), aucune donnée chiffrée ne peut être relue en cas de panne totale du PC.
+- **مفتاح الاسترجاع**: أدخل كلمة مرور المدير لإظهار المفتاح `AGL-RK1-...`، وقم بطباعته أو حفظه في مكان آمن خارج الحاسوب لاستعماله عند تعطل الجهاز.
+
+#### C. Export / Import USB & Vérification — التصدير والاستيراد عبر USB والتحقق
+- **Exporter vers USB** : Cliquez sur **Exporter (.agbkp)** sur n'importe quelle sauvegarde pour l'enregistrer sur un disque externe ou une clé USB.
+- **Importer depuis USB** : Cliquez sur **Importer (.agbkp)** pour charger une archive externe, la vérifier et l'ajouter à l'historique.
+- **Vérifier l'intégrité** : Le bouton **Vérifier** contrôle les empreintes SHA-256, le déchiffrement, l'intégrité SQLite (`integrity_check`), les clés étrangères (`foreign_key_check`) et la présence de chaque document du coffre.
+- **التحقق والنقل عبر USB**: يتيح النظام تصدير ملفات `.agbkp` إلى قرص خارجي أو استيرادها والتحقق الكامل من سلامتها قبل أي استرجاع.
+
+#### D. Restauration Atomique (`PRE_RESTORE`) — الاسترجاع الآمن للبيانات
+- Avant toute restauration (réservée à l'Administrateur avec confirmation du mot de passe), l'application crée obligatoirement un instantané de sécurité **`PRE_RESTORE`** de l'état actuel, puis restaure la base et le coffre de manière atomique (avec retour arrière automatique en cas d'erreur).
+- **الاسترجاع الآمن**: قبل استرجاع أي نسخة، يُنشئ النظام تلقائياً نسخة أمان `PRE_RESTORE` للحالة الحالية، ثم يسترجع قاعدة البيانات والوثائق بشكل متكامل مع تراجع تلقائي عند حدوث أي خطأ.
+
+#### E. Installation, Mise à jour & Récupération Windows — التثبيت والتحديث على ويندوز
+- **Installation & Mise à jour** : Exécutez `Gestion Agence de Location-Setup-1.0.0-x64.exe`. Les données de l'agence (`agency_erp.db`, `secure_vault`, `backups`) sont stockées dans `%APPDATA%\Gestion Agence de Location\` et **sont conservées lors des mises à jour et même en cas de désinstallation**. Avant toute migration de base lors d'une mise à jour, un instantané **`PRE_MIGRATION`** est automatiquement créé.
+- **Récupération d'accès / verrouillage** : Après 5 tentatives erronées, la session se verrouille automatiquement pendant quelques minutes (ou peut être débloquée après le délai d'attente). En cas d'oubli définitif du mot de passe Administrateur sur un poste perdu, réinstallez l'application sur le poste cible, créez le nouvel Admin au premier démarrage puis restaurez la dernière sauvegarde `.agbkp` à l'aide de sa phrase secrète ou de la clé `AGL-RK1-...`.
+- **التثبيت والتحديث**: يتم حفظ بيانات الوكالة في مجلد `%APPDATA%` ولا تُحذف عند التحديث أو إزالة التثبيت، مع أخذ نسخة `PRE_MIGRATION` تلقائياً قبل أي تحديث لقاعدة البيانات.

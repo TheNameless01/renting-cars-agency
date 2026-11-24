@@ -40,6 +40,12 @@ export const PREVIEW_ENDPOINTS = {
   NOTIFICATIONS: `${PREVIEW_API_BASE}/notifications`,
   AUDIT: `${PREVIEW_API_BASE}/audit`,
   BACKUPS: `${PREVIEW_API_BASE}/backups`,
+  BACKUPS_HEALTH: `${PREVIEW_API_BASE}/backups/health`,
+  BACKUPS_VERIFY: `${PREVIEW_API_BASE}/backups/verify`,
+  BACKUPS_RESTORE: `${PREVIEW_API_BASE}/backups/restore`,
+  BACKUPS_EXPORT: `${PREVIEW_API_BASE}/backups/export`,
+  BACKUPS_IMPORT: `${PREVIEW_API_BASE}/backups/import`,
+  BACKUPS_RECOVERY_KEY: `${PREVIEW_API_BASE}/backups/recovery-key`,
 } as const;
 
 export interface PreviewEnvironmentBanner {

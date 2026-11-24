@@ -1,12 +1,24 @@
 import express from 'express';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
 import { ZodError } from 'zod';
+import {
+  createBackup,
+  createPreMigrationSnapshot,
+  exportBackupFile,
+  getBackupRecordById,
+  importBackupExternal,
+  listBackups,
+  restoreFromBackup,
+  verifyBackupArchive,
+} from './electron/backups/backupService.ts';
 import { openSqliteConnection, resolveDatabasePath } from './electron/database/connection.ts';
 import { runMigrations } from './electron/database/migrator.ts';
-import { listAuditLogs } from './electron/database/services/auditService.ts';
+import { listAuditLogs, writeAuditLog } from './electron/database/services/auditService.ts';
+import { checkDatabaseHealth } from './electron/database/services/healthService.ts';
 import {
   bootstrapFirstAdmin,
   changeOwnPassword,
@@ -166,7 +178,13 @@ import {
 import { getAllSettings, updateSettingsBatch } from './electron/database/services/settingsService.ts';
 import { createUser, listAllPermissions, listUsers, updateUser } from './electron/database/services/userService.ts';
 import { listWilayas, upsertWilaya } from './electron/database/services/wilayaService.ts';
-import { getOrCreateLocalVaultKey } from './electron/security/crypto.ts';
+import {
+  formatVaultRecoveryKey,
+  getOrCreateLocalVaultKey,
+  getVaultKeyFingerprint,
+  verifyPassword,
+} from './electron/security/crypto.ts';
+import { SlidingWindowRateLimiter } from './electron/security/rateLimit.ts';
 import { AuthError, requireAuthenticatedSession, requirePermission, resolveEffectivePermissions } from './electron/security/rbac.ts';
 import { SessionStore } from './electron/security/sessionStore.ts';
 import { PREVIEW_ENDPOINTS } from './shared/api/previewContracts.ts';
@@ -179,6 +197,7 @@ import {
   ChangePasswordSchema,
   CloseCashSessionSchema,
   CompleteContractSchema,
+  CreateBackupSchema,
   CreateBlockedPeriodSchema,
   CreateContractPhase2Schema,
   CreateCustomerAdjustmentSchema,
@@ -193,9 +212,11 @@ import {
   CreateTrafficFineSchema,
   CreateUserSchema,
   CreateVehicleSchema,
+  ExportBackupSchema,
   ExportReportSchema,
   ExtendContractSchema,
   GenerateDocumentSchema,
+  ImportBackupSchema,
   ListDocumentsSchema,
   LoginSchema,
   OpenCashSessionSchema,
@@ -205,9 +226,11 @@ import {
   ReportFilterSchema,
   ReprintDocumentSchema,
   ResolveRiskRecordSchema,
+  RestoreBackupSchema,
   ReverseExpenseSchema,
   ReversePaymentSchema,
   SettleDepositSchema,
+  ShowRecoveryKeySchema,
   UnlockSessionSchema,
   UpdateCustomerDocMetaSchema,
   UpdateCustomerSchema,
@@ -229,6 +252,7 @@ import {
   UpsertVehicleDocSchema,
   UpsertVehicleMaintenanceScheduleSchema,
   UpsertWilayaSchema,
+  VerifyBackupSchema,
 } from './shared/schemas/index.ts';
 import type { PermissionCode } from './shared/types/domain.ts';
 
@@ -236,7 +260,18 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export function createPreviewExpressApp(customDbPath?: string) {
   const app = express();
-  app.use(express.json({ limit: '12mb' }));
+  app.use(express.json({ limit: '50mb' }));
+
+  // HTTP security hardening headers
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    if (req.path.startsWith('/api/')) {
+      res.setHeader('Cache-Control', 'no-store');
+    }
+    next();
+  });
 
   // SECURITY BOUNDARY: Strictly isolated temporary SQLite database & vault in os.tmpdir() (or test temp path).
   const previewDbPath = customDbPath
@@ -245,14 +280,43 @@ export function createPreviewExpressApp(customDbPath?: string) {
   const previewVaultDir = customDbPath
     ? path.join(path.dirname(previewDbPath), 'preview_vault')
     : path.join(os.tmpdir(), 'algeria_car_rental_erp_preview', 'vault');
+  const previewBackupDir = customDbPath
+    ? path.join(path.dirname(previewDbPath), 'preview_backups')
+    : path.join(os.tmpdir(), 'algeria_car_rental_erp_preview', 'backups');
   const previewVaultKey = getOrCreateLocalVaultKey(previewVaultDir);
 
-  const db = openSqliteConnection(previewDbPath);
+  let db = openSqliteConnection(previewDbPath);
   const migrationsDir = path.resolve(__dirname, 'electron/database/migrations');
-  runMigrations(db, migrationsDir);
+  runMigrations(db, migrationsDir, {
+    onBeforeApply: (pendingFiles) => {
+      createPreMigrationSnapshot(db, {
+        dbPath: previewDbPath,
+        vaultRootDir: previewVaultDir,
+        backupDir: previewBackupDir,
+        pendingFiles,
+      });
+    },
+  });
 
-  // Isolated preview SessionStore (never shared with desktop main process)
+  // Isolated preview SessionStore & Auth rate limiter (never shared with desktop main process)
   const previewSessionStore = new SessionStore('preview');
+  const authRateLimiter = new SlidingWindowRateLimiter({ windowMs: 5 * 60_000, maxAttempts: 40 });
+  const checkAuthRateLimit = (req: express.Request, res: express.Response, action: string): boolean => {
+    const ip = req.ip || req.socket.remoteAddress || 'local';
+    const rl = authRateLimiter.consume(`${action}:${ip}`);
+    if (!rl.allowed) {
+      res.setHeader('Retry-After', String(rl.retryAfterSeconds));
+      res.status(429).json({
+        ok: false,
+        error: {
+          code: 'LOCKED',
+          message: `Trop de requêtes d’authentification. Réessayez dans ${rl.retryAfterSeconds}s.`,
+        },
+      });
+      return false;
+    }
+    return true;
+  };
 
   const extractBearer = (req: express.Request): string | null => {
     const auth = req.headers.authorization;
@@ -321,6 +385,7 @@ export function createPreviewExpressApp(customDbPath?: string) {
   });
 
   app.post(PREVIEW_ENDPOINTS.AUTH_BOOTSTRAP, (req, res) => {
+    if (!checkAuthRateLimit(req, res, 'bootstrap')) return;
     try {
       const parsed = BootstrapAdminSchema.parse(req.body);
       const session = bootstrapFirstAdmin(db, previewSessionStore, 'preview', parsed);
@@ -331,6 +396,7 @@ export function createPreviewExpressApp(customDbPath?: string) {
   });
 
   app.post(PREVIEW_ENDPOINTS.AUTH_LOGIN, (req, res) => {
+    if (!checkAuthRateLimit(req, res, 'login')) return;
     try {
       const parsed = LoginSchema.parse(req.body);
       const session = loginUser(db, previewSessionStore, 'preview', parsed.username, parsed.password);
@@ -370,6 +436,7 @@ export function createPreviewExpressApp(customDbPath?: string) {
   });
 
   app.post(PREVIEW_ENDPOINTS.AUTH_UNLOCK, (req, res) => {
+    if (!checkAuthRateLimit(req, res, 'unlock')) return;
     try {
       const token = extractBearer(req);
       if (!token) throw new AuthError('UNAUTHORIZED', 'Jeton de session manquant');
@@ -2403,12 +2470,241 @@ export function createPreviewExpressApp(customDbPath?: string) {
     }
   });
 
+  // ============================================================================
+  // Phase 6: Database Health, Encrypted Backups, Recovery Key & Atomic Restore
+  // ============================================================================
+  app.get(PREVIEW_ENDPOINTS.BACKUPS_HEALTH, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'db:health');
+      const report = checkDatabaseHealth(db, {
+        dbPath: previewDbPath,
+        migrationsDir,
+        vaultRootDir: previewVaultDir,
+        vaultProtectionMode: 'local_file_0600',
+        deepIntegrity: req.query.deep !== 'false',
+      });
+      res.json({ ok: true, data: report });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.get(PREVIEW_ENDPOINTS.BACKUPS, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'backups:manage');
+      const limit = req.query.limit ? Number(req.query.limit) : 100;
+      res.json({ ok: true, data: listBackups(db, limit) });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(PREVIEW_ENDPOINTS.BACKUPS, async (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'backups:manage');
+      const parsed = CreateBackupSchema.parse(req.body ?? {});
+      const result = await createBackup(db, {
+        backupDir: previewBackupDir,
+        vaultRootDir: previewVaultDir,
+        vaultKey: previewVaultKey,
+        appVersion: '1.0.0',
+        backupType: parsed.backupType,
+        encryptionMode: parsed.encryptionMode,
+        passphrase: parsed.passphrase,
+        destinationPath: parsed.destinationPath ?? null,
+        notes: parsed.notes ?? null,
+        actor: { id: session.userId, username: session.username },
+      });
+      res.status(201).json({ ok: true, data: result });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(PREVIEW_ENDPOINTS.BACKUPS_VERIFY, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'backups:manage');
+      const parsed = VerifyBackupSchema.parse(req.body ?? {});
+      let filePath = parsed.filePath;
+      let tempPath: string | null = null;
+      try {
+        if (parsed.backupRecordId) {
+          filePath = getBackupRecordById(db, parsed.backupRecordId).destinationPath;
+        } else if (parsed.base64Archive) {
+          tempPath = path.join(os.tmpdir(), `agl-verify-prev-${Date.now()}.agbkp`);
+          fs.writeFileSync(tempPath, Buffer.from(parsed.base64Archive, 'base64'), { mode: 0o600 });
+          filePath = tempPath;
+        }
+        if (!filePath) {
+          throw new AuthError('VALIDATION_ERROR', 'Identifiant ou fichier de sauvegarde requis');
+        }
+        const result = verifyBackupArchive({
+          filePath,
+          passphrase: parsed.passphrase,
+          recoveryKey: parsed.recoveryKey,
+          vaultKey: previewVaultKey,
+          db,
+          backupRecordId: parsed.backupRecordId,
+          actor: { id: session.userId, username: session.username },
+        });
+        res.json({ ok: true, data: result });
+      } finally {
+        if (tempPath && fs.existsSync(tempPath)) {
+          fs.rmSync(tempPath, { force: true });
+        }
+      }
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(PREVIEW_ENDPOINTS.BACKUPS_EXPORT, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'backups:manage');
+      const parsed = ExportBackupSchema.parse(req.body ?? {});
+      const exported = exportBackupFile(db, {
+        backupRecordId: parsed.backupRecordId,
+        destinationPath: parsed.destinationPath,
+        actor: { id: session.userId, username: session.username },
+      });
+      res.json({ ok: true, data: exported });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(PREVIEW_ENDPOINTS.BACKUPS_IMPORT, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'backups:manage');
+      const parsed = ImportBackupSchema.parse(req.body ?? {});
+      const imported = importBackupExternal(db, {
+        backupDir: previewBackupDir,
+        vaultKey: previewVaultKey,
+        sourcePath: parsed.sourcePath,
+        fileName: parsed.fileName,
+        base64Archive: parsed.base64Archive,
+        passphrase: parsed.passphrase,
+        recoveryKey: parsed.recoveryKey,
+        actor: { id: session.userId, username: session.username },
+      });
+      res.status(201).json({ ok: true, data: imported });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(PREVIEW_ENDPOINTS.BACKUPS_RECOVERY_KEY, (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'backups:manage');
+      const parsed = ShowRecoveryKeySchema.parse(req.body ?? {});
+      const adminRow = db
+        .prepare<[number], { password_hash: string; is_active: number }>(
+          'SELECT password_hash, is_active FROM users WHERE id = ?'
+        )
+        .get(session.userId);
+      if (!adminRow || adminRow.is_active !== 1 || !verifyPassword(parsed.adminPassword, adminRow.password_hash)) {
+        writeAuditLog(db, {
+          userId: session.userId,
+          usernameSnapshot: session.username,
+          operation: 'SENSITIVE_ADMIN_AUTH_FAILED',
+          entityType: 'users',
+          entityId: session.userId,
+        });
+        throw new AuthError('UNAUTHORIZED', 'Mot de passe administrateur incorrect');
+      }
+      writeAuditLog(db, {
+        userId: session.userId,
+        usernameSnapshot: session.username,
+        operation: 'VAULT_RECOVERY_KEY_VIEWED',
+        entityType: 'backup_records',
+        entityId: null,
+        newValue: { fingerprint: getVaultKeyFingerprint(previewVaultKey) },
+      });
+      res.json({
+        ok: true,
+        data: {
+          recoveryKey: formatVaultRecoveryKey(previewVaultKey),
+          fingerprint: getVaultKeyFingerprint(previewVaultKey),
+          protectionMode: 'local_file_0600',
+        },
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post(PREVIEW_ENDPOINTS.BACKUPS_RESTORE, async (req, res) => {
+    try {
+      const session = requireAuthenticatedSession(db, previewSessionStore, extractBearer(req));
+      requirePermission(db, session, 'backups:restore');
+      const parsed = RestoreBackupSchema.parse(req.body ?? {});
+      const adminRow = db
+        .prepare<[number], { password_hash: string; is_active: number }>(
+          'SELECT password_hash, is_active FROM users WHERE id = ?'
+        )
+        .get(session.userId);
+      if (!adminRow || adminRow.is_active !== 1 || !verifyPassword(parsed.adminPassword, adminRow.password_hash)) {
+        writeAuditLog(db, {
+          userId: session.userId,
+          usernameSnapshot: session.username,
+          operation: 'RESTORE_AUTH_FAILED',
+          entityType: 'backup_records',
+          entityId: parsed.backupRecordId ?? null,
+        });
+        throw new AuthError('UNAUTHORIZED', 'Mot de passe administrateur incorrect');
+      }
+      const restored = await restoreFromBackup(
+        {
+          getDb: () => db,
+          setDb: (nextDb) => {
+            db = nextDb;
+          },
+          dbPath: previewDbPath,
+          migrationsDir,
+          vaultRootDir: previewVaultDir,
+          vaultKey: previewVaultKey,
+          vaultProtectionMode: 'local_file_0600',
+          backupDir: previewBackupDir,
+          appVersion: '1.0.0',
+        },
+        {
+          backupRecordId: parsed.backupRecordId,
+          filePath: parsed.filePath,
+          base64Archive: parsed.base64Archive,
+          fileName: parsed.fileName,
+          passphrase: parsed.passphrase,
+          recoveryKey: parsed.recoveryKey,
+          actor: { id: session.userId, username: session.username },
+        }
+      );
+      res.json({ ok: true, data: restored });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
   // Reject any unknown /api/* path cleanly (never expose production DB or static FS)
   app.use('/api', (_req, res) => {
     res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Endpoint API introuvable' } });
   });
 
-  return { app, db, previewDbPath, previewVaultDir, previewSessionStore };
+  return {
+    app,
+    get db() {
+      return db;
+    },
+    previewDbPath,
+    previewVaultDir,
+    previewBackupDir,
+    previewSessionStore,
+  };
 }
 
 async function startServer() {

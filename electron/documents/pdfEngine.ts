@@ -80,11 +80,22 @@ interface FontBundle {
 let cachedFonts: FontBundle | null = null;
 
 function resolveFontsDir(): string {
-  const candidates = [
-    path.resolve(process.cwd(), 'electron', 'assets', 'fonts'),
-    path.resolve(import.meta.dirname ?? process.cwd(), '..', 'assets', 'fonts'),
-    '/usr/share/fonts/truetype/dejavu',
-  ];
+  const candidates: string[] = [];
+  if (typeof __dirname !== 'undefined') {
+    candidates.push(path.resolve(__dirname, '../../electron/assets/fonts'));
+    candidates.push(path.resolve(__dirname, '../assets/fonts'));
+  }
+  if (import.meta.dirname) {
+    candidates.push(path.resolve(import.meta.dirname, '..', 'assets', 'fonts'));
+  }
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  if (typeof resourcesPath === 'string' && resourcesPath) {
+    candidates.push(path.resolve(resourcesPath, 'app.asar.unpacked', 'electron', 'assets', 'fonts'));
+    candidates.push(path.resolve(resourcesPath, 'electron', 'assets', 'fonts'));
+  }
+  candidates.push(path.resolve(process.cwd(), 'electron', 'assets', 'fonts'));
+  candidates.push('/usr/share/fonts/truetype/dejavu');
+
   for (const dir of candidates) {
     if (fs.existsSync(path.join(dir, 'DejaVuSans.ttf'))) {
       return dir;

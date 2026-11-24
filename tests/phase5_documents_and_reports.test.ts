@@ -930,9 +930,13 @@ test('Phase 5 Documents, PDF Engine (FR/AR RTL & Thermal), Immutability, Custome
     assert.equal(agentReportExp.error.code, 'FORBIDDEN');
 
     // 12. Preview Express API isolation & Phase 5 HTTP endpoint RBAC verification
-    const preview = createPreviewExpressApp();
-    const server = preview.app.listen(0);
+    const preview = createPreviewExpressApp(path.join(root, 'preview_isolated_p5', 'preview.sqlite'));
+    const server = preview.app.listen(0, '127.0.0.1');
     try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('listening', () => resolve());
+        server.once('error', reject);
+      });
       const addr = server.address() as AddressInfo;
       const base = `http://127.0.0.1:${addr.port}`;
 

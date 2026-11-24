@@ -9,6 +9,7 @@ import type {
   PaymentMethod,
 } from '../../../shared/types/domain.ts';
 import { decryptBuffer, encryptBuffer, resolveConfinedPath } from '../../security/crypto.ts';
+import { validateAndDecodeUpload } from '../../security/fileValidation.ts';
 import { AuthError } from '../../security/rbac.ts';
 import { writeAuditLog } from './auditService.ts';
 import { appendCashMovementIfOpenSession } from './cashRegisterService.ts';
@@ -312,16 +313,20 @@ export function settleDeposit(
     let nextDocMime: string | null = dep.supporting_doc_mime_type ?? null;
 
     if (input.supportingDoc) {
-      const rawBytes = Buffer.from(input.supportingDoc.base64Data, 'base64');
-      const encrypted = encryptBuffer(rawBytes, vaultKey);
+      const validated = validateAndDecodeUpload({
+        originalFileName: input.supportingDoc.originalFileName,
+        mimeType: input.supportingDoc.mimeType,
+        base64Data: input.supportingDoc.base64Data,
+      });
+      const encrypted = encryptBuffer(validated.bytes, vaultKey);
       const opaqueName = `dep_${dep.id}_${crypto.randomUUID()}.enc`;
       const relPath = path.join('deposits', opaqueName);
       const fullPath = resolveConfinedPath(vaultRootDir, relPath);
       fs.mkdirSync(path.dirname(fullPath), { recursive: true });
       fs.writeFileSync(fullPath, encrypted, { mode: 0o600 });
       nextDocPath = relPath;
-      nextDocName = input.supportingDoc.originalFileName;
-      nextDocMime = input.supportingDoc.mimeType;
+      nextDocName = validated.safeFileName;
+      nextDocMime = validated.mimeType;
     }
 
     if (input.deductedAmountMinor > 0) {

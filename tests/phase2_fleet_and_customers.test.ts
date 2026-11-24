@@ -210,7 +210,10 @@ test('Phase 2 Fleet Management & Customer Vault/Risk enforcement via Desktop IPC
     assert.equal(compRes.data.company.companyName, 'SARL Atlas Logistics');
 
     // 4. Encrypted Customer Document Vault round-trip
-    const secretPayload = Buffer.from('CONFIDENTIAL_ALGERIA_CNI_SCAN_BYTES_2026');
+    const secretPayload = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.from('CONFIDENTIAL_ALGERIA_CNI_SCAN_BYTES_2026'),
+    ]);
     const upDoc = await invoke(IPC_CHANNELS.CUSTOMERS_UPLOAD_DOC, {
       token: agentToken,
       data: {

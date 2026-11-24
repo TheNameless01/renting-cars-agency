@@ -312,7 +312,7 @@ test('Phase 3 Financial Management enforces accounting rules, cash reconciliatio
     assert.equal(agentDepositForbidden.ok, false);
     assert.equal(agentDepositForbidden.error.code, 'FORBIDDEN');
 
-    const proofSample = Buffer.from('PV Radar scan simulation PDF content 2026', 'utf8').toString('base64');
+    const proofSample = Buffer.from('%PDF-1.4\nPV Radar scan simulation PDF content 2026', 'utf8').toString('base64');
     const settleRes = await invoke(IPC_CHANNELS.FINANCE_SETTLE_DEPOSIT, {
       token: adminToken,
       data: {
@@ -366,7 +366,10 @@ test('Phase 3 Financial Management enforces accounting rules, cash reconciliatio
     assert.equal(supRes.ok, true);
     const supplierId = supRes.data.id as number;
 
-    const receiptBytes = Buffer.from('Facture vidange 6000 DA', 'utf8').toString('base64');
+    const receiptBytes = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.from('Facture vidange 6000 DA', 'utf8'),
+    ]).toString('base64');
     const expVehicleRes = await invoke(IPC_CHANNELS.FINANCE_RECORD_EXPENSE, {
       token: adminToken,
       data: {

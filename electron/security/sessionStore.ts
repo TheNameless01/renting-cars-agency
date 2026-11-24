@@ -74,6 +74,18 @@ export class SessionStore {
     return true;
   }
 
+  checkIdleAndAutoLock(token: string, idleMinutes: number): { lockedNow: boolean; record: ActiveSessionRecord | null } {
+    const record = this.get(token);
+    if (!record) {
+      return { lockedNow: false, record: null };
+    }
+    if (!record.isLocked && idleMinutes > 0 && Date.now() - record.lastActivityMs > idleMinutes * 60_000) {
+      record.isLocked = true;
+      return { lockedNow: true, record };
+    }
+    return { lockedNow: false, record };
+  }
+
   unlock(token: string, updatedUser?: User, updatedPermissions?: PermissionCode[]): boolean {
     const record = this.sessions.get(token);
     if (!record) return false;

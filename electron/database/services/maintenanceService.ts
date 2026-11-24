@@ -10,6 +10,7 @@ import type {
   VehicleMaintenanceSchedule,
 } from '../../../shared/types/domain.ts';
 import { decryptBuffer, encryptBuffer, resolveConfinedPath } from '../../security/crypto.ts';
+import { validateAndDecodeUpload } from '../../security/fileValidation.ts';
 import { AuthError } from '../../security/rbac.ts';
 import {
   getVehicleMaintenanceDueSummary,
@@ -464,8 +465,12 @@ function saveEncryptedInvoice(
   vaultKey: Buffer,
   doc: { originalFileName: string; mimeType: string; base64Data: string }
 ) {
-  const rawBytes = Buffer.from(doc.base64Data, 'base64');
-  const encrypted = encryptBuffer(rawBytes, vaultKey);
+  const validated = validateAndDecodeUpload({
+    originalFileName: doc.originalFileName,
+    mimeType: doc.mimeType,
+    base64Data: doc.base64Data,
+  });
+  const encrypted = encryptBuffer(validated.bytes, vaultKey);
   const opaqueName = `mnt_${crypto.randomUUID()}.enc`;
   const relPath = path.join('maintenance', opaqueName);
   const fullPath = resolveConfinedPath(vaultRootDir, relPath);
@@ -473,8 +478,8 @@ function saveEncryptedInvoice(
   fs.writeFileSync(fullPath, encrypted, { mode: 0o600 });
   return {
     filePath: relPath,
-    originalName: doc.originalFileName,
-    mimeType: doc.mimeType,
+    originalName: validated.safeFileName,
+    mimeType: validated.mimeType,
   };
 }
 

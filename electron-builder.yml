@@ -7,6 +7,9 @@ directories:
 files:
   - dist/**/*
   - dist-electron/**/*
+  - electron/database/migrations/**/*
+  - electron/assets/**/*
+  - build/icon.png
   - shared/**/*
   - package.json
   - "!node_modules/.cache"
@@ -15,7 +18,10 @@ asarUnpack:
   - "node_modules/better-sqlite3/**/*"
   - "node_modules/bindings/**/*"
   - "node_modules/file-uri-partition/**/*"
+  - "electron/database/migrations/**/*"
+  - "electron/assets/**/*"
 win:
+  icon: build/icon.ico
   target:
     - target: nsis
       arch:
@@ -30,5 +36,7 @@ nsis:
   createStartMenuShortcut: true
   shortcutName: Gestion Agence de Location
   language: 1036
+  include: build/installer.nsh
+  deleteAppDataOnUninstall: false
 extraMetadata:
   main: dist-electron/main/index.js

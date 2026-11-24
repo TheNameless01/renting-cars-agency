@@ -5,6 +5,9 @@ import type {
   AppNotification,
   AuditLogEntry,
   AuthSession,
+  BackupEncryptionMode,
+  BackupRecord,
+  BackupVerificationResult,
   CashMovementType,
   CashRegisterMovement,
   CashRegisterSession,
@@ -20,6 +23,7 @@ import type {
   DamageSeverity,
   DamageStatus,
   DamageType,
+  DatabaseHealthReport,
   DepositChargeCategory,
   DepositStatus,
   DocumentFormat,
@@ -56,6 +60,7 @@ import type {
   RoleCode,
   Supplier,
   SystemPrinterInfo,
+  VaultRecoveryInfo,
   Vehicle,
   VehicleDamage,
   VehicleDocType,
@@ -995,6 +1000,7 @@ export interface InventoryPartDetailDto {
  * In-memory auth token only (never written to localStorage or sessionStorage).
  */
 let memoryToken: string | null = null;
+let sessionLockedHandler: (() => void) | null = null;
 
 export function setInMemoryAuthToken(token: string | null): void {
   memoryToken = token;
@@ -1002,6 +1008,10 @@ export function setInMemoryAuthToken(token: string | null): void {
 
 export function getInMemoryAuthToken(): string | null {
   return memoryToken;
+}
+
+export function setOnSessionLockedHandler(handler: (() => void) | null): void {
+  sessionLockedHandler = handler;
 }
 
 export function isDesktopRuntime(): boolean {
@@ -1014,12 +1024,25 @@ async function callBackend<T>(
   httpUrl: string,
   payload?: unknown
 ): Promise<T> {
+  const notifyIfSessionLocked = (code?: string) => {
+    if (
+      code === 'LOCKED' &&
+      memoryToken &&
+      ipcChannel !== IPC_CHANNELS.AUTH_LOGIN &&
+      ipcChannel !== IPC_CHANNELS.AUTH_UNLOCK &&
+      ipcChannel !== IPC_CHANNELS.AUTH_BOOTSTRAP_ADMIN
+    ) {
+      sessionLockedHandler?.();
+    }
+  };
+
   if (typeof window !== 'undefined' && window.electronAPI) {
     const res: IpcResult<T> = await window.electronAPI.invoke(ipcChannel, {
       token: memoryToken,
       data: payload,
     });
     if (!res.ok) {
+      notifyIfSessionLocked(res.error?.code);
       const err = new Error(res.error?.message || 'Erreur IPC') as Error & { code?: string };
       err.code = res.error?.code;
       throw err;
@@ -1042,6 +1065,7 @@ async function callBackend<T>(
 
   const body = (await response.json()) as IpcResult<T>;
   if (!response.ok || !body.ok) {
+    notifyIfSessionLocked(body.error?.code);
     const err = new Error(body.error?.message || `HTTP ${response.status}`) as Error & { code?: string };
     err.code = body.error?.code;
     throw err;
@@ -2841,4 +2865,120 @@ export const erpClient = {
       `${PREVIEW_ENDPOINTS.REPORTS}/export`,
       payload
     ),
+
+  // Phase 6: Backups, Health Diagnostics, Vault Recovery & Atomic Restore
+  getDatabaseHealth: (deepIntegrity = true) =>
+    callBackend<DatabaseHealthReport>(
+      IPC_CHANNELS.BACKUPS_HEALTH,
+      'GET',
+      `${PREVIEW_ENDPOINTS.BACKUPS_HEALTH}${buildQuery({ deep: deepIntegrity ? 'true' : 'false' })}`,
+      { deepIntegrity }
+    ),
+
+  listBackups: (limit = 100) =>
+    callBackend<BackupRecord[]>(
+      IPC_CHANNELS.BACKUPS_LIST,
+      'GET',
+      `${PREVIEW_ENDPOINTS.BACKUPS}${buildQuery({ limit: String(limit) })}`,
+      { limit }
+    ),
+
+  createBackup: (payload: {
+    backupType?: 'MANUAL' | 'AUTO';
+    encryptionMode?: BackupEncryptionMode;
+    passphrase?: string;
+    destinationPath?: string | null;
+    notes?: string | null;
+  }) =>
+    callBackend<{ backup: BackupRecord; verification: BackupVerificationResult }>(
+      IPC_CHANNELS.BACKUPS_CREATE_MANUAL,
+      'POST',
+      PREVIEW_ENDPOINTS.BACKUPS,
+      payload
+    ),
+
+  verifyBackup: (payload: {
+    backupRecordId?: number;
+    filePath?: string;
+    base64Archive?: string;
+    passphrase?: string;
+    recoveryKey?: string;
+  }) =>
+    callBackend<BackupVerificationResult>(
+      IPC_CHANNELS.BACKUPS_VERIFY,
+      'POST',
+      PREVIEW_ENDPOINTS.BACKUPS_VERIFY,
+      payload
+    ),
+
+  exportBackup: (payload: { backupRecordId: number; destinationPath?: string }) =>
+    callBackend<{
+      fileName: string;
+      exportedToPath?: string;
+      base64Archive?: string;
+      checksumSha256: string;
+    }>(
+      IPC_CHANNELS.BACKUPS_EXPORT,
+      'POST',
+      PREVIEW_ENDPOINTS.BACKUPS_EXPORT,
+      payload
+    ),
+
+  importBackup: (payload: {
+    sourcePath?: string;
+    fileName?: string;
+    base64Archive?: string;
+    passphrase?: string;
+    recoveryKey?: string;
+  }) =>
+    callBackend<{ backup: BackupRecord; verification: BackupVerificationResult }>(
+      IPC_CHANNELS.BACKUPS_IMPORT,
+      'POST',
+      PREVIEW_ENDPOINTS.BACKUPS_IMPORT,
+      payload
+    ),
+
+  getVaultRecoveryKey: (adminPassword: string) =>
+    callBackend<VaultRecoveryInfo>(
+      IPC_CHANNELS.BACKUPS_RECOVERY_KEY,
+      'POST',
+      PREVIEW_ENDPOINTS.BACKUPS_RECOVERY_KEY,
+      { adminPassword }
+    ),
+
+  restoreBackup: (payload: {
+    backupRecordId?: number;
+    filePath?: string;
+    base64Archive?: string;
+    fileName?: string;
+    passphrase?: string;
+    recoveryKey?: string;
+    adminPassword: string;
+  }) =>
+    callBackend<{
+      restoredFrom: string;
+      verification: BackupVerificationResult;
+      preRestoreBackup: BackupRecord;
+      healthReport: DatabaseHealthReport;
+    }>(
+      IPC_CHANNELS.BACKUPS_RESTORE,
+      'POST',
+      PREVIEW_ENDPOINTS.BACKUPS_RESTORE,
+      payload
+    ),
+
+  pickBackupPath: async (payload: {
+    mode: 'save' | 'open';
+    defaultFileName?: string;
+  }): Promise<{ canceled: boolean; filePath: string | null }> => {
+    if (!isDesktopRuntime()) {
+      return { canceled: true, filePath: null };
+    }
+    return callBackend<{ canceled: boolean; filePath: string | null }>(
+      IPC_CHANNELS.BACKUPS_PICK_FILE,
+      'POST',
+      `${PREVIEW_ENDPOINTS.BACKUPS}/pick-file`,
+      payload
+    );
+  },
 };

@@ -17,6 +17,7 @@ import type {
   VehicleInspection,
 } from '../../../shared/types/domain.ts';
 import { decryptBuffer, encryptBuffer, resolveConfinedPath } from '../../security/crypto.ts';
+import { validateAndDecodeUpload } from '../../security/fileValidation.ts';
 import { AuthError } from '../../security/rbac.ts';
 import { writeAuditLog } from './auditService.ts';
 
@@ -915,8 +916,13 @@ export function uploadInspectionPhoto(
     }
   }
 
-  const rawBytes = Buffer.from(input.base64Data, 'base64');
-  const encryptedBytes = encryptBuffer(rawBytes, vaultKey);
+  const validated = validateAndDecodeUpload({
+    originalFileName: input.originalFileName,
+    mimeType: input.mimeType,
+    base64Data: input.base64Data,
+    allowedMimes: ['image/jpeg', 'image/png', 'image/webp'],
+  });
+  const encryptedBytes = encryptBuffer(validated.bytes, vaultKey);
   const opaqueName = `insp_${input.inspectionId}_${crypto.randomUUID()}.enc`;
   const relativePath = path.join('inspections', opaqueName);
   const fullPath = resolveConfinedPath(vaultRootDir, relativePath);
@@ -934,8 +940,8 @@ export function uploadInspectionPhoto(
       input.inspectionId,
       input.damageId ?? null,
       relativePath,
-      input.originalFileName,
-      input.mimeType,
+      validated.safeFileName,
+      validated.mimeType,
       input.caption?.trim() || null,
       actor.id
     );

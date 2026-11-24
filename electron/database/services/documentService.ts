@@ -13,6 +13,7 @@ import type {
   ReportFilter,
 } from '../../../shared/types/domain.ts';
 import { decryptBuffer, encryptBuffer, resolveConfinedPath } from '../../security/crypto.ts';
+import { validateAndDecodeUpload } from '../../security/fileValidation.ts';
 import { AuthError } from '../../security/rbac.ts';
 import { writeAuditLog } from './auditService.ts';
 import { updateSettingsBatch } from './settingsService.ts';
@@ -196,9 +197,14 @@ export function uploadAgencyLogo(
   vaultKey: Buffer,
   input: { originalFileName: string; mimeType: 'image/png' | 'image/jpeg'; base64Data: string }
 ): DocumentTemplateConfig {
-  const bytes = Buffer.from(input.base64Data, 'base64');
-  if (bytes.length === 0) throw new AuthError('VALIDATION_ERROR', 'Logo vide');
-  const encrypted = encryptBuffer(bytes, vaultKey);
+  const validated = validateAndDecodeUpload({
+    originalFileName: input.originalFileName,
+    mimeType: input.mimeType,
+    base64Data: input.base64Data,
+    allowedMimes: ['image/png', 'image/jpeg'],
+    maxBytes: 3 * 1024 * 1024,
+  });
+  const encrypted = encryptBuffer(validated.bytes, vaultKey);
   const opaqueName = `agency_logo_${crypto.randomUUID()}.enc`;
   const relativePath = path.join('branding', opaqueName);
   const fullPath = resolveConfinedPath(vaultRootDir, relativePath);
@@ -207,7 +213,7 @@ export function uploadAgencyLogo(
 
   updateSettingsBatch(db, actor, [
     { key: 'agency.logo_vault_path', group: 'agency', value: relativePath },
-    { key: 'agency.logo_mime_type', group: 'agency', value: input.mimeType },
+    { key: 'agency.logo_mime_type', group: 'agency', value: validated.mimeType },
   ]);
 
   writeAuditLog(db, {
@@ -216,7 +222,7 @@ export function uploadAgencyLogo(
     operation: 'AGENCY_LOGO_UPDATED',
     entityType: 'application_settings',
     entityId: 'agency.logo_vault_path',
-    newValue: { mimeType: input.mimeType, originalFileName: input.originalFileName },
+    newValue: { mimeType: validated.mimeType, originalFileName: validated.safeFileName },
   });
 
   return loadTemplateConfigFromDb(db);

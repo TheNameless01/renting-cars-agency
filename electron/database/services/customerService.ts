@@ -12,6 +12,7 @@ import type {
   RiskReason,
 } from '../../../shared/types/domain.ts';
 import { decryptBuffer, encryptBuffer, resolveConfinedPath } from '../../security/crypto.ts';
+import { validateAndDecodeUpload } from '../../security/fileValidation.ts';
 import { AuthError } from '../../security/rbac.ts';
 import { writeAuditLog } from './auditService.ts';
 import { computeCustomerFinancialMetrics } from './customerFinanceService.ts';
@@ -548,8 +549,12 @@ export function uploadCustomerDocument(
     }
   }
 
-  const rawBytes = Buffer.from(input.base64Data, 'base64');
-  const encryptedBytes = encryptBuffer(rawBytes, vaultKey);
+  const validated = validateAndDecodeUpload({
+    originalFileName: input.originalFileName,
+    mimeType: input.mimeType,
+    base64Data: input.base64Data,
+  });
+  const encryptedBytes = encryptBuffer(validated.bytes, vaultKey);
   const opaqueName = `cust_${input.customerId}_${crypto.randomUUID()}.enc`;
   const relativePath = path.join('customers', opaqueName);
   const fullPath = resolveConfinedPath(vaultRootDir, relativePath);
@@ -570,8 +575,8 @@ export function uploadCustomerDocument(
         input.customerId,
         input.docCategory,
         relativePath,
-        input.originalFileName,
-        input.mimeType,
+        validated.safeFileName,
+        validated.mimeType,
         input.documentNumber ?? null,
         input.issueDate ?? null,
         input.expirationDate ?? null,

@@ -50,7 +50,8 @@ export type PermissionCode =
   | 'reports:export'
   | 'audit:view'
   | 'backups:manage'
-  | 'backups:restore';
+  | 'backups:restore'
+  | 'db:health';
 
 export interface Role {
   id: number;
@@ -903,14 +904,108 @@ export interface AuditLogEntry {
   createdAt: string;
 }
 
+export type BackupEncryptionMode = 'VAULT_RECOVERY_KEY' | 'PASSPHRASE';
+export type BackupVerificationStatus = 'PENDING' | 'VERIFIED' | 'FAILED';
+
 export interface BackupRecord {
   id: number;
   backupType: 'AUTO' | 'MANUAL' | 'PRE_RESTORE';
   destinationPath: string;
+  fileName?: string;
   fileSizeBytes: number;
   checksumSha256: string;
   status: 'SUCCESS' | 'FAILED';
   errorMessage: string | null;
+  appVersion?: string;
+  schemaVersion?: string;
+  includesVault?: boolean;
+  attachmentCount?: number;
+  backupFormat?: string;
+  isEncrypted?: boolean;
+  encryptionMode?: BackupEncryptionMode;
+  recoveryKeyFingerprint?: string | null;
+  verifiedAt?: string | null;
+  verificationStatus?: BackupVerificationStatus;
+  verificationSummaryJson?: string | null;
   triggeredByUserId: number | null;
+  triggeredByUsername?: string | null;
+  notes?: string | null;
   createdAt: string;
 }
+
+export interface BackupVerificationResult {
+  valid: boolean;
+  filePath: string;
+  fileName: string;
+  fileSizeBytes: number;
+  archiveChecksumSha256: string;
+  backupType: 'AUTO' | 'MANUAL' | 'PRE_RESTORE';
+  createdAt: string;
+  appVersion: string;
+  schemaVersion: string;
+  encryptionMode: BackupEncryptionMode;
+  recoveryKeyFingerprint: string | null;
+  integrityCheckOk: boolean;
+  foreignKeyViolations: number;
+  missingTables: string[];
+  attachmentCount: number;
+  verifiedAttachmentCount: number;
+  missingAttachmentCount: number;
+  recordCounts: {
+    users: number;
+    vehicles: number;
+    customers: number;
+    contracts: number;
+    payments: number;
+    generatedDocuments: number;
+  };
+  errorMessage: string | null;
+}
+
+export interface VaultRecoveryInfo {
+  recoveryKey: string;
+  fingerprint: string;
+  protectionMode: 'dpapi_safestorage' | 'local_file_0600';
+}
+
+export type HealthSeverityStatus = 'HEALTHY' | 'WARNING' | 'CRITICAL';
+
+export interface HealthCheckItem {
+  key: string;
+  status: 'OK' | 'WARNING' | 'ERROR';
+  messageFr: string;
+  messageAr: string;
+  details?: string | null;
+}
+
+export interface DatabaseHealthReport {
+  overallStatus: HealthSeverityStatus;
+  checkedAt: string;
+  dbPath: string;
+  dbSizeBytes: number;
+  walSizeBytes: number;
+  schemaVersion: string;
+  journalMode: string;
+  synchronousMode: string;
+  foreignKeysEnabled: boolean;
+  integrityCheckOk: boolean;
+  foreignKeyViolationsCount: number;
+  migrationChecksumsOk: boolean;
+  missingTables: string[];
+  vaultAccessible: boolean;
+  vaultProtectionMode: 'dpapi_safestorage' | 'local_file_0600';
+  vaultFileCount: number;
+  missingReferencedAttachments: number;
+  freeDiskBytes: number | null;
+  recordCounts: {
+    users: number;
+    vehicles: number;
+    customers: number;
+    contracts: number;
+    payments: number;
+    generatedDocuments: number;
+    backups: number;
+  };
+  checks: HealthCheckItem[];
+}
+

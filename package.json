@@ -1,14 +1,18 @@
 {
-  "name": "react-example",
+  "name": "gestion-agence-location-erp",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "Progiciel de gestion hors-ligne pour agence de location de véhicules en Algérie",
+  "author": "Gestion Agence de Location",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
     "start": "tsx server.ts",
     "build": "vite build",
+    "build:electron": "node scripts/build-electron.mjs",
+    "dist:win": "npm run build && npm run build:electron && electron-builder --win --x64",
     "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
+    "clean": "rm -rf dist dist-electron server.js",
     "lint": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts"
   },

@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { PermissionCode } from '../../shared/types/domain.ts';
+import { writeAuditLog } from '../database/services/auditService.ts';
 import type { ActiveSessionRecord, SessionStore } from './sessionStore.ts';
 
 export class AuthError extends Error {
@@ -24,6 +25,21 @@ export class AuthError extends Error {
               : code === 'NOT_FOUND'
                 ? 404
                 : 400;
+  }
+}
+
+export function getConfiguredAutoLockMinutes(db: Database.Database): number {
+  try {
+    const row = db
+      .prepare<[], { setting_value: string }>(
+        "SELECT setting_value FROM application_settings WHERE setting_key = 'app.auto_lock_minutes'"
+      )
+      .get();
+    if (!row) return 15;
+    const parsed = Number(row.setting_value);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 15;
+  } catch {
+    return 15;
   }
 }
 
@@ -63,7 +79,7 @@ export function resolveEffectivePermissions(db: Database.Database, userId: numbe
 }
 
 /**
- * Backend authentication guard. Rejects missing, expired, or locked sessions.
+ * Backend authentication guard. Rejects missing, expired, idle-timed-out, or locked sessions.
  */
 export function requireAuthenticatedSession(
   db: Database.Database,
@@ -85,11 +101,32 @@ export function requireAuthenticatedSession(
     throw new AuthError('UNAUTHORIZED', 'Compte utilisateur désactivé');
   }
 
-  if (session.isLocked && !allowLocked) {
-    throw new AuthError('LOCKED', 'Session verrouillée — déverrouillage requis');
+  if (!allowLocked) {
+    const idleMinutes = getConfiguredAutoLockMinutes(db);
+    const idleCheck = sessionStore.checkIdleAndAutoLock(session.token, idleMinutes);
+    if (idleCheck.lockedNow) {
+      try {
+        writeAuditLog(db, {
+          userId: session.userId,
+          usernameSnapshot: session.username,
+          operation: 'SESSION_AUTO_LOCKED',
+          entityType: 'users',
+          entityId: session.userId,
+          newValue: { idleMinutes },
+        });
+      } catch {
+        // Non-blocking audit write during auto-lock
+      }
+      throw new AuthError('LOCKED', 'Session verrouillée automatiquement suite à une inactivité prolongée');
+    }
+
+    if (session.isLocked) {
+      throw new AuthError('LOCKED', 'Session verrouillée — déverrouillage requis');
+    }
+
+    sessionStore.touch(session.token);
   }
 
-  sessionStore.touch(session.token);
   return session;
 }
 

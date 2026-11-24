@@ -6,12 +6,26 @@ import type Database from 'better-sqlite3';
 export interface MigrationResult {
   applied: string[];
   alreadyApplied: string[];
+  latestVersion: string;
+}
+
+export function listMigrationFiles(migrationsDir: string): string[] {
+  return fs
+    .readdirSync(migrationsDir)
+    .filter((f) => f.endsWith('.sql'))
+    .sort((a, b) => a.localeCompare(b));
 }
 
 /**
  * Executes ordered SQL migrations inside explicit transactions and records SHA-256 checksums.
+ * If existing tables are present and new migrations are pending, runs `onBeforeApply` first
+ * (used to automatically snapshot the database prior to schema changes).
  */
-export function runMigrations(db: Database.Database, migrationsDir: string): MigrationResult {
+export function runMigrations(
+  db: Database.Database,
+  migrationsDir: string,
+  options?: { onBeforeApply?: (pendingFiles: string[]) => void }
+): MigrationResult {
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       version TEXT PRIMARY KEY,
@@ -21,21 +35,15 @@ export function runMigrations(db: Database.Database, migrationsDir: string): Mig
     );
   `);
 
-  const files = fs
-    .readdirSync(migrationsDir)
-    .filter((f) => f.endsWith('.sql'))
-    .sort((a, b) => a.localeCompare(b));
-
+  const files = listMigrationFiles(migrationsDir);
   const appliedStmt = db.prepare<[], { version: string; checksum: string }>(
     'SELECT version, checksum FROM schema_migrations'
   );
-  const existing = new Map(appliedStmt.all().map((row) => [row.version, row.checksum]));
+  const existingRows = appliedStmt.all();
+  const existing = new Map(existingRows.map((row) => [row.version, row.checksum]));
 
-  const insertMigration = db.prepare(
-    'INSERT INTO schema_migrations (version, name, checksum) VALUES (?, ?, ?)'
-  );
-
-  const applied: string[] = [];
+  // Verify checksums and compute pending list before applying any new migration
+  const pending: Array<{ file: string; version: string; sql: string; checksum: string }> = [];
   const alreadyApplied: string[] = [];
 
   for (const file of files) {
@@ -52,16 +60,37 @@ export function runMigrations(db: Database.Database, migrationsDir: string): Mig
         );
       }
       alreadyApplied.push(file);
-      continue;
+    } else {
+      pending.push({ file, version, sql, checksum });
     }
-
-    const applyTx = db.transaction(() => {
-      db.exec(sql);
-      insertMigration.run(version, file, checksum);
-    });
-    applyTx();
-    applied.push(file);
   }
 
-  return { applied, alreadyApplied };
+  // Trigger pre-migration safety backup ONLY if database already had prior migrations/data
+  if (pending.length > 0 && existingRows.length > 0 && options?.onBeforeApply) {
+    options.onBeforeApply(pending.map((p) => p.file));
+  }
+
+  const insertMigration = db.prepare(
+    'INSERT INTO schema_migrations (version, name, checksum) VALUES (?, ?, ?)'
+  );
+  const applied: string[] = [];
+
+  for (const item of pending) {
+    const applyTx = db.transaction(() => {
+      db.exec(item.sql);
+      insertMigration.run(item.version, item.file, item.checksum);
+    });
+    applyTx();
+    applied.push(item.file);
+  }
+
+  const latestRow = db
+    .prepare<[], { version: string }>('SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1')
+    .get();
+
+  return {
+    applied,
+    alreadyApplied,
+    latestVersion: latestRow?.version ?? '000',
+  };
 }

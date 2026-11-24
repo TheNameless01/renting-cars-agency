@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type Database from 'better-sqlite3';
 import { ZodError } from 'zod';
 import {
@@ -9,6 +12,7 @@ import {
   ChangePasswordSchema,
   CloseCashSessionSchema,
   CompleteContractSchema,
+  CreateBackupSchema,
   CreateBlockedPeriodSchema,
   CreateContractPhase2Schema,
   CreateCustomerAdjustmentSchema,
@@ -23,9 +27,11 @@ import {
   CreateTrafficFineSchema,
   CreateUserSchema,
   CreateVehicleSchema,
+  ExportBackupSchema,
   ExportReportSchema,
   ExtendContractSchema,
   GenerateDocumentSchema,
+  ImportBackupSchema,
   ListDocumentsSchema,
   LoginSchema,
   OpenCashSessionSchema,
@@ -36,9 +42,11 @@ import {
   ReportFilterSchema,
   ReprintDocumentSchema,
   ResolveRiskRecordSchema,
+  RestoreBackupSchema,
   ReverseExpenseSchema,
   ReversePaymentSchema,
   SettleDepositSchema,
+  ShowRecoveryKeySchema,
   UnlockSessionSchema,
   UpdateCustomerDocMetaSchema,
   UpdateCustomerSchema,
@@ -60,6 +68,7 @@ import {
   UpsertVehicleDocSchema,
   UpsertVehicleMaintenanceScheduleSchema,
   UpsertWilayaSchema,
+  VerifyBackupSchema,
 } from '../../shared/schemas/index.ts';
 import type { PermissionCode } from '../../shared/types/domain.ts';
 import {
@@ -68,7 +77,17 @@ import {
   resolveAlert,
   syncOperationalAlerts,
 } from '../database/services/alertService.ts';
-import { listAuditLogs } from '../database/services/auditService.ts';
+import { listAuditLogs, writeAuditLog } from '../database/services/auditService.ts';
+import {
+  createBackup,
+  exportBackupFile,
+  getBackupRecordById,
+  importBackupExternal,
+  listBackups,
+  restoreFromBackup,
+  verifyBackupArchive,
+} from '../backups/backupService.ts';
+import { checkDatabaseHealth } from '../database/services/healthService.ts';
 import {
   bootstrapFirstAdmin,
   changeOwnPassword,
@@ -223,6 +242,7 @@ import {
 import { getAllSettings, updateSettingsBatch } from '../database/services/settingsService.ts';
 import { createUser, listAllPermissions, listUsers, updateUser } from '../database/services/userService.ts';
 import { listWilayas, upsertWilaya } from '../database/services/wilayaService.ts';
+import { formatVaultRecoveryKey, getVaultKeyFingerprint, verifyPassword } from '../security/crypto.ts';
 import { AuthError, requireAuthenticatedSession, requirePermission, resolveEffectivePermissions } from '../security/rbac.ts';
 import type { SessionStore } from '../security/sessionStore.ts';
 import { IPC_CHANNELS, type IpcChannel, type IpcResult } from '../ipc/contracts.ts';
@@ -237,6 +257,19 @@ export type IpcHandlerFn = (payload?: unknown) => Promise<IpcResult<unknown>>;
 export interface IpcVaultContext {
   vaultRootDir: string;
   vaultKey: Buffer;
+  protectionMode?: 'dpapi_safestorage' | 'local_file_0600';
+}
+
+export interface IpcRuntimeContext {
+  dbPath?: string;
+  migrationsDir?: string;
+  backupDir?: string;
+  appVersion?: string;
+  onDatabaseReplaced?: (nextDb: Database.Database) => void;
+  pickBackupPath?: (options: {
+    mode: 'save' | 'open';
+    defaultFileName?: string;
+  }) => Promise<{ canceled: boolean; filePath: string | null }>;
 }
 
 /**
@@ -244,11 +277,13 @@ export interface IpcVaultContext {
  * Testable independently from Electron GUI runtime.
  */
 export function createIpcHandlers(
-  db: Database.Database,
+  initialDb: Database.Database,
   sessionStore: SessionStore,
   vault?: IpcVaultContext,
-  printAdapter: DesktopPrintAdapter = createNoopPrintAdapter()
+  printAdapter: DesktopPrintAdapter = createNoopPrintAdapter(),
+  runtimeContext?: IpcRuntimeContext
 ): Record<string, IpcHandlerFn> {
+  let db = initialDb;
   const wrap = (fn: (envelope: IpcEnvelope<any>) => unknown): IpcHandlerFn => {
     return async (rawPayload?: unknown) => {
       try {
@@ -1542,6 +1577,209 @@ export function createIpcHandlers(
         base64Data: generated.pdfBase64,
         document: generated.document,
       };
+    }),
+
+    // Phase 6: Database Health, Encrypted Backups, Recovery Key & Atomic Restore
+    [IPC_CHANNELS.BACKUPS_HEALTH]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'db:health');
+      if (!vault) throw new Error('Vault non configuré');
+      return checkDatabaseHealth(db, {
+        dbPath: runtimeContext?.dbPath ?? db.name,
+        migrationsDir: runtimeContext?.migrationsDir,
+        vaultRootDir: vault.vaultRootDir,
+        vaultProtectionMode: vault.protectionMode ?? 'local_file_0600',
+        deepIntegrity: env.data?.deepIntegrity !== false,
+      });
+    }),
+
+    [IPC_CHANNELS.BACKUPS_LIST]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'backups:manage');
+      return listBackups(db, env.data?.limit ? Number(env.data.limit) : 100);
+    }),
+
+    [IPC_CHANNELS.BACKUPS_CREATE_MANUAL]: wrap(async (env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'backups:manage');
+      if (!vault) throw new Error('Vault non configuré');
+      const parsed = CreateBackupSchema.parse(env.data ?? {});
+      const backupDir = runtimeContext?.backupDir ?? path.join(path.dirname(vault.vaultRootDir), 'backups');
+      return createBackup(db, {
+        backupDir,
+        vaultRootDir: vault.vaultRootDir,
+        vaultKey: vault.vaultKey,
+        appVersion: runtimeContext?.appVersion ?? '1.0.0',
+        backupType: parsed.backupType,
+        encryptionMode: parsed.encryptionMode,
+        passphrase: parsed.passphrase,
+        destinationPath: parsed.destinationPath ?? null,
+        notes: parsed.notes ?? null,
+        actor: { id: session.userId, username: session.username },
+      });
+    }),
+
+    [IPC_CHANNELS.BACKUPS_VERIFY]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'backups:manage');
+      if (!vault) throw new Error('Vault non configuré');
+      const parsed = VerifyBackupSchema.parse(env.data ?? {});
+      let filePath = parsed.filePath;
+      let tempPath: string | null = null;
+      try {
+        if (parsed.backupRecordId) {
+          const rec = getBackupRecordById(db, parsed.backupRecordId);
+          filePath = rec.destinationPath;
+        } else if (parsed.base64Archive) {
+          tempPath = path.join(os.tmpdir(), `agl-verify-ipc-${Date.now()}.agbkp`);
+          fs.writeFileSync(tempPath, Buffer.from(parsed.base64Archive, 'base64'), { mode: 0o600 });
+          filePath = tempPath;
+        }
+        if (!filePath) {
+          throw new AuthError('VALIDATION_ERROR', 'Identifiant ou fichier de sauvegarde requis');
+        }
+        return verifyBackupArchive({
+          filePath,
+          passphrase: parsed.passphrase,
+          recoveryKey: parsed.recoveryKey,
+          vaultKey: vault.vaultKey,
+          db,
+          backupRecordId: parsed.backupRecordId,
+          actor: { id: session.userId, username: session.username },
+        });
+      } finally {
+        if (tempPath && fs.existsSync(tempPath)) {
+          fs.rmSync(tempPath, { force: true });
+        }
+      }
+    }),
+
+    [IPC_CHANNELS.BACKUPS_EXPORT]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'backups:manage');
+      const parsed = ExportBackupSchema.parse(env.data ?? {});
+      return exportBackupFile(db, {
+        backupRecordId: parsed.backupRecordId,
+        destinationPath: parsed.destinationPath,
+        actor: { id: session.userId, username: session.username },
+      });
+    }),
+
+    [IPC_CHANNELS.BACKUPS_IMPORT]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'backups:manage');
+      if (!vault) throw new Error('Vault non configuré');
+      const parsed = ImportBackupSchema.parse(env.data ?? {});
+      const backupDir = runtimeContext?.backupDir ?? path.join(path.dirname(vault.vaultRootDir), 'backups');
+      return importBackupExternal(db, {
+        backupDir,
+        vaultKey: vault.vaultKey,
+        sourcePath: parsed.sourcePath,
+        fileName: parsed.fileName,
+        base64Archive: parsed.base64Archive,
+        passphrase: parsed.passphrase,
+        recoveryKey: parsed.recoveryKey,
+        actor: { id: session.userId, username: session.username },
+      });
+    }),
+
+    [IPC_CHANNELS.BACKUPS_RECOVERY_KEY]: wrap((env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'backups:manage');
+      if (!vault) throw new Error('Vault non configuré');
+      const parsed = ShowRecoveryKeySchema.parse(env.data ?? {});
+      const adminRow = db
+        .prepare<[number], { password_hash: string; is_active: number }>(
+          'SELECT password_hash, is_active FROM users WHERE id = ?'
+        )
+        .get(session.userId);
+      if (!adminRow || adminRow.is_active !== 1 || !verifyPassword(parsed.adminPassword, adminRow.password_hash)) {
+        writeAuditLog(db, {
+          userId: session.userId,
+          usernameSnapshot: session.username,
+          operation: 'SENSITIVE_ADMIN_AUTH_FAILED',
+          entityType: 'users',
+          entityId: session.userId,
+        });
+        throw new AuthError('UNAUTHORIZED', 'Mot de passe administrateur incorrect');
+      }
+      writeAuditLog(db, {
+        userId: session.userId,
+        usernameSnapshot: session.username,
+        operation: 'VAULT_RECOVERY_KEY_VIEWED',
+        entityType: 'backup_records',
+        entityId: null,
+        newValue: { fingerprint: getVaultKeyFingerprint(vault.vaultKey) },
+      });
+      return {
+        recoveryKey: formatVaultRecoveryKey(vault.vaultKey),
+        fingerprint: getVaultKeyFingerprint(vault.vaultKey),
+        protectionMode: vault.protectionMode ?? 'local_file_0600',
+      };
+    }),
+
+    [IPC_CHANNELS.BACKUPS_RESTORE]: wrap(async (env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'backups:restore');
+      if (!vault) throw new Error('Vault non configuré');
+      if (!runtimeContext?.migrationsDir) {
+        throw new Error('Contexte migrations manquant pour la restauration');
+      }
+      const parsed = RestoreBackupSchema.parse(env.data ?? {});
+      const adminRow = db
+        .prepare<[number], { password_hash: string; is_active: number }>(
+          'SELECT password_hash, is_active FROM users WHERE id = ?'
+        )
+        .get(session.userId);
+      if (!adminRow || adminRow.is_active !== 1 || !verifyPassword(parsed.adminPassword, adminRow.password_hash)) {
+        writeAuditLog(db, {
+          userId: session.userId,
+          usernameSnapshot: session.username,
+          operation: 'RESTORE_AUTH_FAILED',
+          entityType: 'backup_records',
+          entityId: parsed.backupRecordId ?? null,
+        });
+        throw new AuthError('UNAUTHORIZED', 'Mot de passe administrateur incorrect');
+      }
+
+      const backupDir = runtimeContext.backupDir ?? path.join(path.dirname(vault.vaultRootDir), 'backups');
+      return restoreFromBackup(
+        {
+          getDb: () => db,
+          setDb: (nextDb) => {
+            db = nextDb;
+            runtimeContext.onDatabaseReplaced?.(nextDb);
+          },
+          dbPath: runtimeContext.dbPath ?? db.name,
+          migrationsDir: runtimeContext.migrationsDir,
+          vaultRootDir: vault.vaultRootDir,
+          vaultKey: vault.vaultKey,
+          vaultProtectionMode: vault.protectionMode ?? 'local_file_0600',
+          backupDir,
+          appVersion: runtimeContext.appVersion ?? '1.0.0',
+        },
+        {
+          backupRecordId: parsed.backupRecordId,
+          filePath: parsed.filePath,
+          base64Archive: parsed.base64Archive,
+          fileName: parsed.fileName,
+          passphrase: parsed.passphrase,
+          recoveryKey: parsed.recoveryKey,
+          actor: { id: session.userId, username: session.username },
+        }
+      );
+    }),
+
+    [IPC_CHANNELS.BACKUPS_PICK_FILE]: wrap(async (env) => {
+      const session = requireAuthenticatedSession(db, sessionStore, env.token);
+      requirePermission(db, session, 'backups:manage');
+      if (!runtimeContext?.pickBackupPath) {
+        return { canceled: true, filePath: null };
+      }
+      const mode = env.data?.mode === 'save' ? 'save' : 'open';
+      const defaultFileName =
+        typeof env.data?.defaultFileName === 'string' ? env.data.defaultFileName : undefined;
+      return runtimeContext.pickBackupPath({ mode, defaultFileName });
     }),
   };
 }

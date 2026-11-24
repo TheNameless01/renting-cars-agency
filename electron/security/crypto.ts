@@ -67,18 +67,124 @@ export function decryptBuffer(encryptedPayload: Buffer, key: Buffer): Buffer {
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
 }
 
+export interface SafeStorageAdapter {
+  isEncryptionAvailable(): boolean;
+  encryptString(plainText: string): Buffer;
+  decryptString(encrypted: Buffer): string;
+}
+
+export interface LocalVaultKeyResult {
+  key: Buffer;
+  protectionMode: 'dpapi_safestorage' | 'local_file_0600';
+}
+
+/**
+ * Computes a short non-secret SHA-256 fingerprint of a 32-byte vault key for audit & recovery matching.
+ */
+export function getVaultKeyFingerprint(key: Buffer): string {
+  return crypto.createHash('sha256').update(key).digest('hex').slice(0, 16).toUpperCase();
+}
+
+/**
+ * Encodes a 32-byte key into a human-transcribable recovery code for offline emergency printout.
+ */
+export function formatVaultRecoveryKey(key: Buffer): string {
+  if (key.length !== 32) {
+    throw new Error('Vault key must be 32 bytes');
+  }
+  const hex = key.toString('hex').toUpperCase();
+  const groups = hex.match(/.{1,8}/g) ?? [];
+  return `AGL-RK1-${groups.join('-')}`;
+}
+
+export function parseVaultRecoveryKey(recoveryCode: string): Buffer {
+  const cleaned = String(recoveryCode || '')
+    .trim()
+    .toUpperCase()
+    .replace(/^AGL-RK1-/, '')
+    .replace(/[^0-9A-F]/g, '');
+  if (cleaned.length !== 64) {
+    throw new Error('Clé de récupération invalide (64 caractères hexadécimaux attendus)');
+  }
+  return Buffer.from(cleaned, 'hex');
+}
+
+/**
+ * Derives a 256-bit AES key from an Admin backup passphrase + random salt via scrypt.
+ */
+export function deriveBackupKeyFromPassphrase(passphrase: string, salt: Buffer): Buffer {
+  return crypto.scryptSync(passphrase, salt, 32, SCRYPT_PARAMS);
+}
+
 /**
  * Loads or generates a dedicated local 256-bit vault key inside a confined non-public directory.
+ * When Electron's OS-backed `safeStorage` (Windows DPAPI) is available, wraps the key in `.vault.key.dpapi`
+ * and removes any legacy plaintext `.vault.key` file after successful verification.
  */
-export function getOrCreateLocalVaultKey(vaultRootDir: string): Buffer {
+export function loadOrCreateVaultKey(
+  vaultRootDir: string,
+  safeStorage?: SafeStorageAdapter | null
+): LocalVaultKeyResult {
   fs.mkdirSync(vaultRootDir, { recursive: true });
-  const keyFile = resolveConfinedPath(vaultRootDir, '.vault.key');
-  if (fs.existsSync(keyFile)) {
-    const hex = fs.readFileSync(keyFile, 'utf8').trim();
+  const dpapiFile = resolveConfinedPath(vaultRootDir, '.vault.key.dpapi');
+  const legacyFile = resolveConfinedPath(vaultRootDir, '.vault.key');
+  const canUseDpapi = Boolean(safeStorage && safeStorage.isEncryptionAvailable());
+
+  // 1. Existing DPAPI-protected vault key
+  if (fs.existsSync(dpapiFile)) {
+    if (!canUseDpapi || !safeStorage) {
+      throw new Error(
+        'Le coffre utilise une clé protégée par Windows DPAPI (safeStorage), inaccessible dans ce contexte.'
+      );
+    }
+    const encryptedBlob = fs.readFileSync(dpapiFile);
+    const hex = safeStorage.decryptString(encryptedBlob).trim();
     const buf = Buffer.from(hex, 'hex');
-    if (buf.length === 32) return buf;
+    if (buf.length === 32) {
+      return { key: buf, protectionMode: 'dpapi_safestorage' };
+    }
+    throw new Error('Clé de coffre DPAPI corrompue');
   }
+
+  // 2. Existing raw local key (upgrade to DPAPI seamlessly when running inside Electron desktop)
+  if (fs.existsSync(legacyFile)) {
+    const hex = fs.readFileSync(legacyFile, 'utf8').trim();
+    const buf = Buffer.from(hex, 'hex');
+    if (buf.length === 32) {
+      if (canUseDpapi && safeStorage) {
+        try {
+          const wrapped = safeStorage.encryptString(buf.toString('hex'));
+          fs.writeFileSync(dpapiFile, wrapped, { mode: 0o600 });
+          const check = Buffer.from(safeStorage.decryptString(fs.readFileSync(dpapiFile)).trim(), 'hex');
+          if (check.length === 32 && crypto.timingSafeEqual(check, buf)) {
+            fs.unlinkSync(legacyFile);
+            return { key: buf, protectionMode: 'dpapi_safestorage' };
+          }
+        } catch {
+          // Fall back cleanly if DPAPI wrapping fails on host
+        }
+      }
+      return { key: buf, protectionMode: 'local_file_0600' };
+    }
+  }
+
+  // 3. Brand new installation -> generate fresh 256-bit key
   const newKey = crypto.randomBytes(32);
-  fs.writeFileSync(keyFile, newKey.toString('hex'), { mode: 0o600 });
-  return newKey;
+  if (canUseDpapi && safeStorage) {
+    try {
+      const wrapped = safeStorage.encryptString(newKey.toString('hex'));
+      fs.writeFileSync(dpapiFile, wrapped, { mode: 0o600 });
+      return { key: newKey, protectionMode: 'dpapi_safestorage' };
+    } catch {
+      // Fallback below
+    }
+  }
+
+  fs.writeFileSync(legacyFile, newKey.toString('hex'), { mode: 0o600 });
+  return { key: newKey, protectionMode: 'local_file_0600' };
 }
+
+export function getOrCreateLocalVaultKey(vaultRootDir: string, safeStorage?: SafeStorageAdapter | null): Buffer {
+  return loadOrCreateVaultKey(vaultRootDir, safeStorage).key;
+}
+

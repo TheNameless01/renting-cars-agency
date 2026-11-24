@@ -4,6 +4,7 @@ import type { AppLanguage, AppTheme, NumeralSystem } from '../shared/types/domai
 import { ToastProvider } from './components/Toast.tsx';
 import { AuthScreen } from './features/auth/AuthScreen.tsx';
 import { LockOverlay } from './features/auth/LockOverlay.tsx';
+import { BackupsPage } from './features/backups/BackupsPage.tsx';
 import { ContractDetailPage } from './features/contracts/ContractDetailPage.tsx';
 import { ContractsPage } from './features/contracts/ContractsPage.tsx';
 import { NewContractWizardPage } from './features/contracts/NewContractWizardPage.tsx';
@@ -83,6 +84,7 @@ function AppContent() {
           <Route path="/finance" element={<FinancePage />} />
           <Route path="/documents" element={<DocumentsPage />} />
           <Route path="/reports" element={<ReportsPage />} />
+          <Route path="/backups" element={<BackupsPage />} />
           <Route path="/users" element={<UsersPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

@@ -1,4 +1,4 @@
-import { Edit3, FileText, Plus, RefreshCw, Save } from 'lucide-react';
+import { Edit3, FileText, HardDrive, Plus, RefreshCw, Save } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { fromMinorUnits, toMinorUnits } from '../../../shared/constants/algeria.ts';
@@ -14,13 +14,14 @@ import { formatDateTimeAlgiers, formatDigits } from '../../lib/formatters.ts';
 type SettingsTab = 'agency' | 'business' | 'app' | 'wilayas' | 'audit';
 
 export function SettingsPage() {
-  const { hasPermission } = useAuth();
+  const { hasPermission, setAutoLockMinutes } = useAuth();
   const { t, lang, numerals, setLang, setNumerals } = useI18n();
   const { setTheme } = useTheme();
   const { showSuccess, showError } = useToast();
 
   const canManage = hasPermission('settings:manage');
   const canViewAudit = hasPermission('audit:view');
+  const canManageBackups = hasPermission('backups:manage') || hasPermission('db:health');
   const canAccessDocTemplates =
     hasPermission('documents:manage_templates') ||
     hasPermission('documents:view') ||
@@ -83,6 +84,10 @@ export function SettingsPage() {
         }
         if (next['app.numeral_system'] === 'latin' || next['app.numeral_system'] === 'arabic') {
           setNumerals(next['app.numeral_system'] as NumeralSystem);
+        }
+        const autoLockVal = Number(next['app.auto_lock_minutes'] ?? '15');
+        if (Number.isFinite(autoLockVal) && autoLockVal >= 0) {
+          setAutoLockMinutes(autoLockVal);
         }
       }
 
@@ -383,8 +388,19 @@ export function SettingsPage() {
                 <NumberField label={t.settings.fields.backupRetentionCount} value={settings['app.backup_retention_count'] ?? '14'} disabled={!canManage} onChange={(v) => setField('app.backup_retention_count', v)} />
               </div>
 
-              {canManage && (
-                <div className="flex justify-end pt-3 border-t border-slate-200 dark:border-slate-800">
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-200 dark:border-slate-800">
+                {canManageBackups ? (
+                  <Link
+                    to="/backups"
+                    className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+                  >
+                    <HardDrive className="w-4 h-4" />
+                    <span>{t.backups.openBackupsPage}</span>
+                  </Link>
+                ) : (
+                  <span />
+                )}
+                {canManage && (
                   <button
                     type="button"
                     disabled={saving}
@@ -394,8 +410,8 @@ export function SettingsPage() {
                     <Save className="w-4 h-4" />
                     <span>{t.settings.saveSettings}</span>
                   </button>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           )}
 

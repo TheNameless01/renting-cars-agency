@@ -184,7 +184,13 @@ export const IPC_CHANNELS = {
 
   BACKUPS_LIST: 'backups:list',
   BACKUPS_CREATE_MANUAL: 'backups:createManual',
+  BACKUPS_VERIFY: 'backups:verify',
   BACKUPS_RESTORE: 'backups:restore',
+  BACKUPS_EXPORT: 'backups:export',
+  BACKUPS_IMPORT: 'backups:import',
+  BACKUPS_HEALTH: 'backups:health',
+  BACKUPS_RECOVERY_KEY: 'backups:recoveryKey',
+  BACKUPS_PICK_FILE: 'backups:pickFile',
 } as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];

@@ -249,11 +249,65 @@ export function unlockSession(
     )
     .get(session.userId);
 
-  if (!row || !verifyPassword(password, row.password_hash)) {
+  if (!row) {
+    sessionStore.revoke(token);
+    throw new AuthError('UNAUTHORIZED', 'Compte utilisateur inactif ou introuvable');
+  }
+
+  if (row.locked_until && Date.parse(row.locked_until) > Date.now()) {
+    sessionStore.revoke(token);
+    throw new AuthError(
+      'LOCKED',
+      `Compte temporairement bloqué suite à plusieurs tentatives échouées jusqu'à ${row.locked_until}`
+    );
+  }
+
+  if (!verifyPassword(password, row.password_hash)) {
+    const nextAttempts = row.failed_login_attempts + 1;
+    const lockedUntil =
+      nextAttempts >= MAX_FAILED_ATTEMPTS ? new Date(Date.now() + LOCK_DURATION_MS).toISOString() : null;
+
+    db.prepare(
+      `UPDATE users
+       SET failed_login_attempts = ?, locked_until = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+       WHERE id = ?`
+    ).run(nextAttempts, lockedUntil, row.id);
+
+    writeAuditLog(db, {
+      userId: row.id,
+      usernameSnapshot: row.username,
+      operation: 'UNLOCK_FAILED',
+      entityType: 'users',
+      entityId: row.id,
+      newValue: { failedAttempts: nextAttempts, lockedUntil },
+    });
+
+    if (lockedUntil) {
+      sessionStore.revoke(token);
+      throw new AuthError(
+        'LOCKED',
+        'Trop de tentatives échouées lors du déverrouillage. Session fermée et compte bloqué 15 minutes.'
+      );
+    }
+
     throw new AuthError('UNAUTHORIZED', 'Mot de passe incorrect pour le déverrouillage');
   }
 
-  const user = mapRawUser(row);
+  db.prepare(
+    `UPDATE users
+     SET failed_login_attempts = 0, locked_until = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+     WHERE id = ?`
+  ).run(row.id);
+
+  const refreshed = db
+    .prepare<[number], RawUserRow>(
+      `SELECT u.*, r.code AS role_code
+       FROM users u JOIN roles r ON r.id = u.role_id
+       WHERE u.id = ?`
+    )
+    .get(row.id)!;
+
+  const user = mapRawUser(refreshed);
   const permissions = resolveEffectivePermissions(db, user.id, user.roleId);
   sessionStore.unlock(token, user, permissions);
 

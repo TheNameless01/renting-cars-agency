@@ -57,32 +57,42 @@
 ---
 
 ### 3. Security Boundaries & Controls
-1. **Electron Renderer Hardening**:
-   - `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, `webSecurity: true`.
+1. **Electron Renderer & Session Hardening**:
+   - `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, `webSecurity: true`, DevTools disabled in production (`devTools: isDev`).
    - Renderer interacts exclusively through whitelisted channels in `electron/ipc/contracts.ts`.
+   - `session.defaultSession` denies all browser permission requests/checks, disables `<webview>` attachment (`will-attach-webview`), blocks external navigation (`will-navigate`) and popups (`setWindowOpenHandler`), and injects strict offline Content-Security-Policy (`default-src 'self'`, `script-src 'self'`, `connect-src 'self'`, `img-src 'self' data: blob:`).
    - Every IPC handler validates input with Zod (`shared/schemas/index.ts`) and verifies the active session + `PermissionCode` on the backend before touching SQLite.
-2. **Authentication & Brute-Force Protection**:
+2. **Authentication, Auto-Lock & Brute-Force Protection**:
    - Passwords hashed with Node `crypto.scryptSync` + 16-byte random per-user salt (`timingSafeEqual` verification).
    - No hardcoded default admin password in production: if zero users exist, a one-time atomic first-run Admin Setup/Claim screen creates the initial `ADMIN` account and permanently disables bootstrap thereafter.
-   - Failed login counter (`failed_login_attempts`) locks an account temporarily (`locked_until`) after 5 consecutive failures.
-3. **Sensitive Customer Document Protection**:
-   - CNI, passport, driving licence, and company documents are stored outside public/static folders, renamed to opaque UUIDs, validated by MIME/extension allowlist, and encrypted at rest using AES-256-GCM with a locally protected key stored in Electron's `safeStorage` (Windows DPAPI) or dedicated OS user keyfile.
+   - Backend + frontend inactivity auto-lock synced to `app.auto_lock_minutes` emits `SESSION_AUTO_LOCKED` audit entries and locks the session on expiry.
+   - Failed login and unlock counters lock an account after 5 consecutive failures, revoke locked sessions on unlock failure, and write `UNLOCK_FAILED` / `LOGIN_FAILED` audit records.
+   - Express preview auth endpoints enforce a sliding-window rate limiter (`SlidingWindowRateLimiter`) plus `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: no-referrer`, and `Cache-Control: no-store`.
+3. **Sensitive Vault Key DPAPI Wrapping, Upload Validation & Path Guards**:
+   - CNI, passport, driving licence, inspection photos, workshop invoices, expense receipts, generated PDFs, and agency logos are stored outside public/static folders as opaque `.enc` files encrypted with AES-256-GCM.
+   - On Electron Windows, `loadOrCreateVaultKey` wraps the 256-bit vault key via Windows DPAPI (`safeStorage`) into `.vault.key.dpapi` and automatically upgrades/removes legacy `.vault.key`.
+   - All 6 upload paths validate decoded binary headers (magic bytes for JPEG/PNG/WebP/PDF) via `validateAndDecodeUpload`, reject disguised executables (`MZ`/`ELF`), ZIP archives, SVG, HTML, or XML scripts, enforce size limits, and sanitize filenames.
    - All filesystem reads/writes verify `resolvedPath.startsWith(baseDir + path.sep)` to block path traversal.
-4. **SQL Injection & Financial Integrity**:
+4. **SQLite Durability, Encrypted Backups & Atomic Restore**:
+   - `PRAGMA foreign_keys = ON`, `PRAGMA journal_mode = WAL`, `PRAGMA synchronous = FULL`, `PRAGMA wal_autocheckpoint = 1000`, non-destructive `PRAGMA quick_check(1)` on open, and `PRAGMA wal_checkpoint(TRUNCATE)` on clean close.
+   - Pending migrations automatically trigger synchronous `VACUUM INTO` `PRE_MIGRATION` snapshots + vault copy prior to DDL execution.
+   - `.agbkp` encrypted backups (`BACKUP_FORMAT_NAME = AGENCY_BACKUP_V1`) capture an online SQLite snapshot via `db.backup()` plus all vault attachments decrypted and re-packed into a single AES-256-GCM archive protected by either the `AGL-RK1-...` Vault Recovery Key or an 8+ character scrypt passphrase.
+   - Restores verify archive integrity + foreign keys + checksums upfront, take a mandatory `PRE_RESTORE` snapshot, apply forward schema migrations if restoring an older archive, re-encrypt attachments under the active vault key, and perform an atomic swap with automatic rollback on failure.
+   - Note on offline dependencies: `exceljs` uses transitive `uuid@8.3.2` locally for XLSX generation with zero network calls.
+5. **SQL Injection & Financial Integrity**:
    - 100% prepared statements via `better-sqlite3` (`?` parameter binding).
-   - Multi-record mutations (contract creation, extension, payment + cash session update, deposit settlement, maintenance + inventory deduction) run inside `db.transaction(...)` (`BEGIN IMMEDIATE`).
+   - Multi-record mutations run inside `db.transaction(...)` (`BEGIN IMMEDIATE`).
    - Financial records are append-only; reversals and authorized adjustments preserve full audit history.
 
 ---
 
 ### 4. Windows 10 / 11 Packaging Requirements (Electron Builder)
-Because this development environment runs on **headless Linux (`gvisor`) without Windows NSIS or Wine**, the actual `.exe` installer cannot be built inside this sandbox. The repository includes complete packaging configuration (`electron-builder.yml`) for local Windows build execution:
+Because this development environment runs on **headless Linux without Windows NSIS or Wine**, the `.exe` installer must be built on the target Windows host. All production bundling scripts, icons (`build/icon.ico`, `build/icon.png`), NSIS hook (`build/installer.nsh`), and `electron-builder.yml` are prepared:
 - **Build Host Prerequisites (Windows 10/11)**:
   - Node.js 20 LTS or 22 LTS (x64)
   - Visual Studio Build Tools ("Desktop development with C++") + Python 3 (for rebuilding `better-sqlite3` native `.node` against Electron's ABI via `electron-rebuild`)
 - **Packaging Steps**:
   1. `npm install`
   2. `npx electron-rebuild -f -w better-sqlite3`
-  3. `npm run build` (compiles Vite renderer + Electron TypeScript main/preload)
-  4. `npx electron-builder --win nsis --x64`
-- **Output**: `release/Gestion Agence de Location-Setup-<version>-x64.exe` (NSIS per-user installer, desktop & Start Menu shortcuts, `asarUnpack` configured for `better-sqlite3`).
+  3. `npm run dist:win` (runs `npm run build` + `npm run build:electron` producing `dist-electron/` CJS bundles with `dist-electron/package.json` `{"type": "commonjs"}` + `electron-builder --win --x64`)
+- **Output**: `release/Gestion Agence de Location-Setup-1.0.0-x64.exe` (NSIS per-user installer, desktop & Start Menu shortcuts, `asarUnpack` configured for `better-sqlite3`, migrations, and PDF fonts, `deleteAppDataOnUninstall: false` to preserve `%APPDATA%` agency data).

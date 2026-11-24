@@ -788,3 +788,48 @@ export const ExportReportSchema = z.object({
   language: z.enum(['fr', 'ar']).default('fr'),
   numeralSystem: z.enum(['latin', 'arabic']).default('latin'),
 });
+
+// Phase 6: Production Backups, Verification, Recovery Key & Atomic Restore
+export const CreateBackupSchema = z.object({
+  backupType: z.enum(['MANUAL', 'AUTO']).default('MANUAL'),
+  encryptionMode: z.enum(['VAULT_RECOVERY_KEY', 'PASSPHRASE']).default('VAULT_RECOVERY_KEY'),
+  passphrase: z.string().min(8).max(128).optional(),
+  destinationPath: z.string().trim().max(500).nullable().optional(),
+  notes: z.string().trim().max(500).nullable().optional(),
+});
+
+export const VerifyBackupSchema = z.object({
+  backupRecordId: z.number().int().positive().optional(),
+  filePath: z.string().trim().max(500).optional(),
+  base64Archive: z.string().max(150_000_000).optional(),
+  passphrase: z.string().min(1).max(128).optional(),
+  recoveryKey: z.string().trim().min(10).max(200).optional(),
+});
+
+export const RestoreBackupSchema = z.object({
+  backupRecordId: z.number().int().positive().optional(),
+  filePath: z.string().trim().max(500).optional(),
+  base64Archive: z.string().max(150_000_000).optional(),
+  fileName: z.string().trim().max(200).optional(),
+  passphrase: z.string().min(1).max(128).optional(),
+  recoveryKey: z.string().trim().min(10).max(200).optional(),
+  adminPassword: z.string().min(1).max(128),
+});
+
+export const ExportBackupSchema = z.object({
+  backupRecordId: z.number().int().positive(),
+  destinationPath: z.string().trim().min(3).max(500).optional(),
+});
+
+export const ImportBackupSchema = z.object({
+  sourcePath: z.string().trim().max(500).optional(),
+  fileName: z.string().trim().max(200).optional(),
+  base64Archive: z.string().max(150_000_000).optional(),
+  passphrase: z.string().min(1).max(128).optional(),
+  recoveryKey: z.string().trim().min(10).max(200).optional(),
+});
+
+export const ShowRecoveryKeySchema = z.object({
+  adminPassword: z.string().min(1).max(128),
+});
+

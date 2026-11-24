@@ -4,6 +4,7 @@ import path from 'node:path';
 import type Database from 'better-sqlite3';
 import type { CurrencyCode, ExpenseCategory, PaymentMethod, Supplier } from '../../../shared/types/domain.ts';
 import { decryptBuffer, encryptBuffer, resolveConfinedPath } from '../../security/crypto.ts';
+import { validateAndDecodeUpload } from '../../security/fileValidation.ts';
 import { AuthError } from '../../security/rbac.ts';
 import { writeAuditLog } from './auditService.ts';
 import { appendCashMovementIfOpenSession } from './cashRegisterService.ts';
@@ -288,16 +289,20 @@ export function recordExpense(
     let receiptName: string | null = null;
     let receiptMime: string | null = null;
     if (input.receiptDoc) {
-      const rawBytes = Buffer.from(input.receiptDoc.base64Data, 'base64');
-      const encrypted = encryptBuffer(rawBytes, vaultKey);
+      const validated = validateAndDecodeUpload({
+        originalFileName: input.receiptDoc.originalFileName,
+        mimeType: input.receiptDoc.mimeType,
+        base64Data: input.receiptDoc.base64Data,
+      });
+      const encrypted = encryptBuffer(validated.bytes, vaultKey);
       const opaqueName = `exp_${crypto.randomUUID()}.enc`;
       const relPath = path.join('expenses', opaqueName);
       const fullPath = resolveConfinedPath(vaultRootDir, relPath);
       fs.mkdirSync(path.dirname(fullPath), { recursive: true });
       fs.writeFileSync(fullPath, encrypted, { mode: 0o600 });
       receiptPath = relPath;
-      receiptName = input.receiptDoc.originalFileName;
-      receiptMime = input.receiptDoc.mimeType;
+      receiptName = validated.safeFileName;
+      receiptMime = validated.mimeType;
     }
 
     const expenseNumber = generateExpenseNumber(db);

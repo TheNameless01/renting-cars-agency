@@ -2,7 +2,7 @@
 ## Gestion Agence de Location — تسيير وكالة كراء السيارات
 
 ### 1. Core Storage & Precision Rules
-- **Engine**: SQLite 3 (`better-sqlite3`), `PRAGMA foreign_keys = ON`, `PRAGMA journal_mode = WAL`, `PRAGMA busy_timeout = 5000`.
+- **Engine**: SQLite 3 (`better-sqlite3`), `PRAGMA foreign_keys = ON`, `PRAGMA journal_mode = WAL`, `PRAGMA synchronous = FULL`, `PRAGMA wal_autocheckpoint = 1000`, `PRAGMA busy_timeout = 5000`, non-destructive `PRAGMA quick_check(1)` on open, and `PRAGMA wal_checkpoint(TRUNCATE)` on clean shutdown.
 - **Monetary Representation**: All currency amounts are stored as **exact integer minor units** (`*_minor`, `INTEGER`, 1 DZD = 100 centimes; 1 EUR = 100 cents). Floating-point arithmetic is prohibited for financial totals.
 - **Temporal Representation**: All timestamps are stored as ISO-8601 UTC strings (`YYYY-MM-DDTHH:MM:SS.sssZ`). Business day boundaries, late-return durations, and cash sessions are evaluated in the `Africa/Algiers` timezone.
 - **Referential Integrity & Soft Deletion**: `ON DELETE RESTRICT` is enforced on vehicles, customers, contracts, payments, deposits, maintenance, and invoices. Historical vehicles and customers referenced by contracts cannot be deleted; they use `is_archived = 1`.
@@ -96,7 +96,7 @@
 | `notifications` | Centralized operational alerts (`MAINTENANCE_DUE`, `MAINTENANCE_OVERDUE`, `VEHICLE_DOCUMENT`, `CUSTOMER_DOCUMENT`, `MILEAGE_ANOMALY`, `LOW_STOCK`) | `PK(id)`, `UNIQUE(dedupe_key)` |
 | `audit_logs` | Immutable operational & financial audit trail | `PK(id)`, `FK(user_id SET NULL)` |
 | `application_settings` | Key/value agency, pricing, document, and UI config | `PK(setting_key)` |
-| `backup_records` | History & SHA-256 checksums of local backups | `PK(id)`, `CHECK(backup_type IN ('AUTO', 'MANUAL', 'PRE_RESTORE'))` |
+| `backup_records` | Encrypted `.agbkp` backup history, SHA-256 checksums & verification ledger *(extended in Migration 009)* | `PK(id)`, `CHECK(backup_type IN ('AUTO', 'MANUAL', 'PRE_RESTORE'))`, `file_name`, `app_version`, `schema_version`, `includes_vault`, `attachment_count`, `backup_format`, `is_encrypted`, `encryption_mode` (`VAULT_RECOVERY_KEY` \| `PASSPHRASE`), `recovery_key_fingerprint`, `verified_at`, `verification_status`, `verification_summary_json`, `triggered_by_username`, `notes` (paired with Admin-only `db:health`, `backups:manage`, `backups:restore` permissions) |
 
 ---
 
@@ -117,3 +117,4 @@
 - `idx_expenses_date_vehicle`, `idx_cash_movements_session`, `idx_notifications_state`, `idx_notifications_entity`, `idx_audit_logs_entity`
 - `idx_gen_docs_kind_date`, `idx_gen_docs_customer`, `idx_gen_docs_vehicle`, `idx_gen_docs_contract`, `idx_gen_docs_source`, `idx_gen_docs_created` *(Migration 008)*
 - `idx_customer_docs_exp` (`customer_documents(customer_id, is_archived, expiration_date)`) *(Migration 008)*
+- `idx_audit_logs_created`, `idx_expenses_status_date`, `idx_contracts_expected_return`, `idx_payments_date`, `idx_backup_records_created` *(Migration 009 scale indexes)*
