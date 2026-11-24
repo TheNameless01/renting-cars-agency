@@ -708,7 +708,7 @@ export function generateReportDataset(
       inspArgs.push(filter.vehicleId);
     }
     if (filter.customerId) {
-      inspClauses.push('vi.customer_id = ?');
+      inspClauses.push('rc.customer_id = ?');
       inspArgs.push(filter.customerId);
     }
     const inspections = db
@@ -716,7 +716,7 @@ export function generateReportDataset(
         `SELECT vi.*, rc.contract_number, c.full_name AS customer_name, v.matricule
          FROM vehicle_inspections vi
          JOIN rental_contracts rc ON rc.id = vi.contract_id
-         JOIN customers c ON c.id = vi.customer_id
+         JOIN customers c ON c.id = rc.customer_id
          JOIN vehicles v ON v.id = vi.vehicle_id
          WHERE ${inspClauses.join(' AND ')}
          ORDER BY vi.inspected_at DESC, vi.id DESC`

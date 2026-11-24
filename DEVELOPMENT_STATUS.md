@@ -1,8 +1,8 @@
 # DEVELOPMENT_STATUS.md
 ## Gestion Agence de Location — تسيير وكالة كراء السيارات
 
-**Last Updated**: Phase 4 Completed (Steps 1, 2 & 3 Verified)
-**Current Phase**: Phase 4 (Vehicle Operations: Inspections, Maintenance & Spare-Parts Inventory) Complete → Ready for Review before Phase 5
+**Last Updated**: Phase 5 Completed (Documents, Bilingual FR/AR RTL PDF Engine, Printing, Customer Docs Expiry & Centralized Reports Verified)
+**Current Phase**: Phase 5 Complete → Ready for Review before Phase 6 (Backups & Windows Packaging)
 
 ---
 
@@ -36,10 +36,18 @@
     - Extended `suppliers`, `inventory_parts` (`unit_label`, `compatible_models`, `is_archived`), and recreated `inventory_movements` ledger (`INITIAL_STOCK`, `PURCHASE`, `ENTRY`, `WITHDRAWAL`, `MAINTENANCE_USE`, `RETURN`, `ADJUSTMENT`), strictly preventing negative stock (`CONFLICT`), optionally posting `SPARE_PARTS` Finance expenses on purchase (`recordInFinance`), and emitting/resolving `LOW_STOCK` operational alerts.
     - Integrated warehouse spare-parts selector in `MaintenanceRecordModal` & `maintenanceService.ts` with atomic one-time deduction upon `COMPLETED` (`parts_consumed_locked`) and `TOTAL` vs. `LABOR_ONLY` Finance expense scope to eliminate double counting.
 
+  - **Phase 5 (Documents, PDF Generation, Printing, Customer Document Expiry & Centralized Reports)**:
+    - **Migration `008_phase5_documents.sql`**: Added granular RBAC permissions (`documents:view`, `documents:reprint`, and Admin-only `documents:manage_templates`, `reports:export`), upgraded `generated_documents` for all 16 document kinds, 4 physical formats (`A4_PDF`, `A4_LANDSCAPE_PDF`, `THERMAL_80MM`, `THERMAL_58MM`), original vs. certified copy lineage (`is_copy`, `source_document_id`), immutable frozen snapshots (`metadata_snapshot_json`, `template_snapshot_json`), SHA-256 checksums, extended `invoices` (`discount_minor`, `currency`, `tax_rate_percent`, `notes`), extended `customer_documents` (`document_number`, `issue_date`, `expiration_date`, `reminder_days`, non-destructive `replaces_doc_id`/`replaced_by_doc_id`, `is_archived`), and seeded configurable `documents.*` template/prefix/printer settings.
+    - **Offline Bilingual PDF Engine (`electron/documents/arabicText.ts`, `electron/documents/pdfEngine.ts`, `electron/documents/templates.ts`)**: Embedded `DejaVuSans` Unicode fonts (`electron/assets/fonts/`), Arabic presentation-form glyph shaping (`arabic-persian-reshaper`) + UAX #9 BiDi visual reordering (`bidi-js`) with LRI/PDI isolation for technical LTR tokens (matricules, document numbers, ISO dates, amounts), pagination, watermarks (`COPIE CONFORME` / `نسخة مطابقة`), digital signatures, and vault-encrypted agency logo embedding.
+    - **Document Vault & Immutability (`documentService.ts`, `printService.ts`)**: AES-256-GCM encrypted archival of generated PDFs in vault (`documents/*.pdf.enc`), strict immutable snapshot reprinting (`DOCUMENTS_REPRINT`), `BrowserWindow` OS printer discovery & silent/dialog printing (`createElectronPrintAdapter`), and audited `DOCUMENT_PRINTED` tracking (`last_printed_at`).
+    - **Customer Documents Lifecycle & Alerts (`customerService.ts`, `alertService.ts`, `CustomerProfilePage.tsx`)**: Expiration tracking, configurable reminder thresholds, metadata editing, non-destructive replacement chains, archiving, and `CUSTOMER_DOCUMENT` notifications with automatic resolution.
+    - **Centralized Reports & Multi-Format Export (`reportService.ts`, `DocumentsPage.tsx`, `DocumentPreviewModal.tsx`)**: Unified `FINANCIAL`, `FLEET`, `OPERATIONAL`, and `CUSTOM` reports excluding security deposits (*cautions*) from rental revenue, plus PDF (A4/Landscape), UTF-8 BOM CSV, and ExcelJS XLSX (numeric cells + RTL sheet support) with CWE-1236 spreadsheet formula-injection neutralization.
+    - **Pre-existing Module Integration**: Connected PDF preview & print workflows cleanly from Contracts, Finance (Payments/Deposits/Cash/Expenses), Inspections/Damages, Maintenance, Vehicles, and Customers without duplicating logic.
+
 ---
 
-### Actual Tests Executed (Phase 4 Complete)
-- **`npm test` (`tsx --test tests/*.test.ts`) — 23/23 passed**:
+### Actual Tests Executed (Phase 5 Complete)
+- **`npm test` (`tsx --test tests/*.test.ts`) — 24/24 passed**:
   1. `Desktop Kernel startup, 69-wilaya seed, first-run Admin bootstrap, lock/unlock, logout, and RBAC enforcement` — **PASS**
   2. `Browser Preview Express API enforces Bearer auth, lock state, and Admin/Agent RBAC` — **PASS**
   3. `Database scope strictly isolates browser preview temp DB from desktop production DB` — **PASS**
@@ -63,12 +71,12 @@
   21. `Phase 4 Step 2 Maintenance lifecycle: blocking, auto next-due, encrypted invoice, single Finance expense posting, and operational alerts auto-resolution via Desktop IPC` — **PASS**
   22. `Phase 4 Step 2 Preview Express HTTP routes enforce RBAC and isolate Maintenance & Operational Alerts on temp DB` — **PASS**
   23. `Phase 4 Step 2 maintenance feature components use ModalDialog portals without raw fixed overlays` — **PASS**
+  24. `Phase 5 Documents, PDF Engine (FR/AR RTL & Thermal), Immutability, Customer Docs, Printing & Reports via Desktop IPC & Preview API` — **PASS** (verified with `pdfjs-dist`, `ExcelJS`, `DesktopPrintAdapter`, SHA-256 vault immutability, and isolated preview RBAC)
 - **`npm run lint` (`tsc --noEmit`)** — **PASS**
 - **`npm run build` (`vite build`)** — **PASS**
 
 ### Known Limitations & Unfinished Work
 - **Headless Linux Sandbox Limitations**:
-  - `xvfb` and `libgtk-3` are absent in this container, and Windows NSIS/Wine is unavailable. Native Electron GUI launch and Windows `.exe` installer packaging cannot execute inside this sandbox; Electron main/preload/IPC handlers and security options were verified via `tsx --test`.
-- **Unfinished Modules (Scheduled for Phases 5–6)**:
-  - **Phase 5 (Print Templates & Document Archive — `/documents` kept disabled)**: Bilingual A4 contract/invoice printable PDFs, 58/80mm thermal receipts, and centralized document archive.
-  - **Phase 6 (Backups & Windows Packaging)**: SQLite online backup & Admin restore UI, full Electron/Windows installer build verification.
+  - `xvfb` and `libgtk-3` are absent in this container, and Windows NSIS/Wine is unavailable. Native Electron GUI launch, OS `BrowserWindow.webContents.print()` physical spooling, and Windows `.exe` installer packaging cannot execute inside this sandbox; Electron main/preload/IPC handlers, PDF generation (`pdf-lib` + `pdfjs-dist` verification), and `DesktopPrintAdapter` invocation were verified via `tsx --test`.
+- **Unfinished Modules (Scheduled for Phase 6)**:
+  - **Phase 6 (Backups, Restore & Windows Packaging)**: SQLite online backup scheduler & Admin restore UI (`/backups`), hardened production Electron build & Windows NSIS `.exe` packaging.

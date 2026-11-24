@@ -40,7 +40,7 @@
 | :--- | :--- | :--- |
 | `customers` | Individuals (`INDIVIDUAL`) and Companies (`COMPANY`) | `PK(id)`, `CHECK(customer_type)`, `CHECK(risk_status)` (`LOW/MEDIUM/HIGH/BLACKLISTED`), `wilaya_code` (`01..69`) |
 | `customer_companies` | Corporate fiscal identifiers (RC, NIF, NIS, ART, Bon de commande) | `PK(id)`, `UNIQUE(customer_id)`, `FK(customer_id -> customers.id CASCADE)` |
-| `customer_documents` | Encrypted CNI, Passport, Driving licence & company files | `PK(id)`, `FK(customer_id -> customers.id RESTRICT)`, `FK(uploaded_by_user_id -> users.id)` |
+| `customer_documents` | Encrypted CNI, Passport, Driving licence & company files *(extended in Migration 008)* | `PK(id)`, `FK(customer_id -> customers.id RESTRICT)`, `FK(uploaded_by_user_id -> users.id)`, `document_number`, `issue_date`, `expiration_date`, `reminder_days`, `is_archived`, `FK(replaces_doc_id)`, `FK(replaced_by_doc_id)`, `archived_at`, `FK(archived_by_user_id)` |
 | `customer_risk_records` | Documented risk incidents & blacklist justifications | `PK(id)`, `FK(customer_id)`, `FK(reported_by_user_id)`, `FK(resolved_by_user_id)` |
 | `customer_custom_rates` | Customer-specific negotiated rates & default discounts *(Migration 003)* | `PK(id)`, `FK(customer_id -> customers.id CASCADE)`, `FK(vehicle_id -> vehicles.id CASCADE)`, `CHECK(default_discount_percent BETWEEN 0 AND 100)` |
 
@@ -91,9 +91,9 @@
 #### Group I — Documents, Alerts, Audit, Settings & Backups (6 tables)
 | Table | Purpose | Key Constraints & Relationships |
 | :--- | :--- | :--- |
-| `invoices` | Bilingual invoices with fiscal compliance flag | `PK(id)`, `UNIQUE(invoice_number)`, `FK(contract_id)`, `FK(customer_id)` |
-| `generated_documents` | Archive of generated A4 PDFs and 58/80mm receipts | `PK(id)`, `UNIQUE(document_number)`, `reprint_count` |
-| `notifications` | Centralized operational alerts (`MAINTENANCE_DUE`, `MAINTENANCE_OVERDUE`, `VEHICLE_DOCUMENT`, `MILEAGE_ANOMALY`, `LOW_STOCK`) | `PK(id)`, `UNIQUE(dedupe_key)` |
+| `invoices` | Bilingual invoices with fiscal compliance flag *(extended in Migration 008)* | `PK(id)`, `UNIQUE(invoice_number)`, `FK(contract_id)`, `FK(customer_id)`, `discount_minor`, `currency`, `tax_rate_percent`, `is_fiscally_compliant`, `notes` |
+| `generated_documents` | Archive of encrypted A4/Landscape PDFs & 58/80mm thermal receipts *(upgraded in Migration 008)* | `PK(id)`, `UNIQUE(document_number)`, `document_kind` (16 types), `format` (`A4_PDF`, `A4_LANDSCAPE_PDF`, `THERMAL_80MM`, `THERMAL_58MM`), `language`, `numeral_system`, `is_copy`, `FK(source_document_id)`, `reprint_count`, `template_version`, `sha256_hash`, `metadata_snapshot_json`, `template_snapshot_json`, `last_printed_at`, entity FKs (`contract_id`, `payment_id`, `deposit_id`, `inspection_id`, `invoice_id`, `customer_id`, `vehicle_id`, `maintenance_record_id`, `expense_id`, `cash_session_id`) |
+| `notifications` | Centralized operational alerts (`MAINTENANCE_DUE`, `MAINTENANCE_OVERDUE`, `VEHICLE_DOCUMENT`, `CUSTOMER_DOCUMENT`, `MILEAGE_ANOMALY`, `LOW_STOCK`) | `PK(id)`, `UNIQUE(dedupe_key)` |
 | `audit_logs` | Immutable operational & financial audit trail | `PK(id)`, `FK(user_id SET NULL)` |
 | `application_settings` | Key/value agency, pricing, document, and UI config | `PK(setting_key)` |
 | `backup_records` | History & SHA-256 checksums of local backups | `PK(id)`, `CHECK(backup_type IN ('AUTO', 'MANUAL', 'PRE_RESTORE'))` |
@@ -115,3 +115,5 @@
 - `idx_maintenance_record_number`, `idx_maintenance_status`, `idx_maintenance_vehicle_date`, `idx_vehicle_maint_schedules_vehicle`, `idx_expenses_unique_posted_maintenance`
 - `idx_inventory_parts_stock`, `idx_inventory_movements_part`, `idx_inventory_movements_maintenance`, `idx_suppliers_archived`
 - `idx_expenses_date_vehicle`, `idx_cash_movements_session`, `idx_notifications_state`, `idx_notifications_entity`, `idx_audit_logs_entity`
+- `idx_gen_docs_kind_date`, `idx_gen_docs_customer`, `idx_gen_docs_vehicle`, `idx_gen_docs_contract`, `idx_gen_docs_source`, `idx_gen_docs_created` *(Migration 008)*
+- `idx_customer_docs_exp` (`customer_documents(customer_id, is_archived, expiration_date)`) *(Migration 008)*

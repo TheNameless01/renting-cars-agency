@@ -55,7 +55,6 @@ async function parsePdfBytes(pdfBytes: Uint8Array): Promise<{
   const loadingTask = pdfjsLib.getDocument({
     data: new Uint8Array(pdfBytes),
     useWorkerFetch: false,
-    isEvalSupported: false,
     verbosity: 0,
   });
   const doc = await loadingTask.promise;
@@ -76,7 +75,11 @@ async function parsePdfBytes(pdfBytes: Uint8Array): Promise<{
     });
   }
 
-  await doc.destroy();
+  if (typeof (doc as any).destroy === 'function') {
+    await (doc as any).destroy();
+  } else {
+    await loadingTask.destroy();
+  }
   const fullText = pages.map((p) => p.text).join('\n');
   return {
     numPages: pages.length,
@@ -211,7 +214,7 @@ test('Phase 5 Documents, PDF Engine (FR/AR RTL & Thermal), Immutability, Custome
           { key: 'agency.name', group: 'agency', value: 'El Djazair Rent Car' },
           { key: 'agency.phone', group: 'agency', value: '+213 21 60 70 80' },
           { key: 'agency.address', group: 'agency', value: 'Hydra, Alger' },
-          { key: 'agency.rc_number', group: 'agency', value: 'RC-16/00-991122' },
+          { key: 'agency.rc', group: 'agency', value: 'RC-16/00-991122' },
           { key: 'agency.nif', group: 'agency', value: '002616009911224' },
           { key: 'agency.nis', group: 'agency', value: '0026160099112' },
           { key: 'agency.art', group: 'agency', value: '1610099112' },
@@ -489,11 +492,24 @@ test('Phase 5 Documents, PDF Engine (FR/AR RTL & Thermal), Immutability, Custome
         expenseDate: today,
         paymentMethod: 'CASH',
         description: '=HYPERLINK("http://evil") Lavage complet',
-        notes: '+1+1 Test injection CSV',
       },
     });
     assert.equal(expRes.ok, true, JSON.stringify(expRes.error));
-    const expenseId = expRes.data.expense.id as number;
+    const expenseId = expRes.data.id as number;
+
+    const expResPlus = await invoke(IPC_CHANNELS.FINANCE_RECORD_EXPENSE, {
+      token: adminToken,
+      data: {
+        category: 'CLEANING',
+        vehicleId,
+        amountMinor: 50_000,
+        currency: 'DZD',
+        expenseDate: today,
+        paymentMethod: 'BANK_TRANSFER',
+        description: '+1+1 Test injection CSV',
+      },
+    });
+    assert.equal(expResPlus.ok, true, JSON.stringify(expResPlus.error));
 
     // Maintenance record (MAINTENANCE_REPORT)
     const mTypes = await invoke(IPC_CHANNELS.MAINTENANCE_TYPES_LIST, {
@@ -594,7 +610,7 @@ test('Phase 5 Documents, PDF Engine (FR/AR RTL & Thermal), Immutability, Custome
             category: 'CUSTOM',
             dateFrom: isoDateDaysOffset(-7),
             dateTo: isoDateDaysOffset(7),
-            includeSections: ['financial_payments', 'fleet_profitability', 'operational_contracts'],
+            includeSections: ['revenue_payments', 'fleet_utilization', 'contracts'],
           },
         },
       },
@@ -826,7 +842,7 @@ test('Phase 5 Documents, PDF Engine (FR/AR RTL & Thermal), Immutability, Custome
     assert.equal(finReport.ok, true);
     const contractedKpi = finReport.data.kpis.find((k: any) => k.key === 'contracted_revenue');
     assert.ok(contractedKpi);
-    assert.equal(contractedKpi.value, 42_000); // 4,200,000 minor = 42,000 DA (deposit 40,000 DA strictly excluded)
+    assert.equal(contractedKpi.numericValue, 42_000); // 4,200,000 minor = 42,000 DA (deposit 40,000 DA strictly excluded)
 
     // CSV Export check: UTF-8 BOM + Formula Injection Neutralization ('=HYPERLINK...)
     const csvExport = await invoke(IPC_CHANNELS.REPORTS_EXPORT_FILE, {
@@ -856,7 +872,7 @@ test('Phase 5 Documents, PDF Engine (FR/AR RTL & Thermal), Immutability, Custome
     });
     assert.equal(xlsxExportAr.ok, true);
     const wb = new ExcelJS.Workbook();
-    await wb.xlsx.load(Buffer.from(xlsxExportAr.data.base64Data, 'base64'));
+    await wb.xlsx.load(Buffer.from(xlsxExportAr.data.base64Data, 'base64') as any);
     assert.ok(wb.worksheets.length >= 2);
     const summarySheet = wb.worksheets[0];
     assert.equal(summarySheet.views[0]?.rightToLeft, true, 'Arabic XLSX worksheet must enable rightToLeft');
